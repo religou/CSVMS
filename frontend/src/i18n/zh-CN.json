@@ -1,0 +1,44 @@
+{
+    "app": {
+        "title": "CSVS - 计算化系统验证管理平台",
+        "dashboard": "仪表板",
+        "documents": "文档管理",
+        "workflows": "审批管理",
+        "traceability": "追溯矩阵",
+        "auditLog": "审计追踪",
+        "admin": "系统设置"
+    },
+    "auth": {
+        "login": "登录",
+        "register": "注册",
+        "logout": "退出登录",
+        "username": "用户名",
+        "password": "密码",
+        "email": "邮箱",
+        "fullName": "姓名",
+        "loginSuccess": "登录成功",
+        "loginFailed": "登录失败"
+    },
+    "signature": {
+        "title": "电子签名",
+        "userId": "用户名",
+        "password": "密码",
+        "comment": "签名备注",
+        "meaning": "签名含义",
+        "success": "签名成功"
+    },
+    "common": {
+        "submit": "提交",
+        "cancel": "取消",
+        "save": "保存",
+        "delete": "删除",
+        "edit": "编辑",
+        "view": "查看",
+        "search": "搜索",
+        "reset": "重置",
+        "confirm": "确认",
+        "loading": "加载中...",
+        "success": "操作成功",
+        "error": "操作失败"
+    }
+}

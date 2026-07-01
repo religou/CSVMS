@@ -1,0 +1,44 @@
+{
+    "app": {
+        "title": "CSVS - Computerized System Validation Platform",
+        "dashboard": "Dashboard",
+        "documents": "Documents",
+        "workflows": "Workflows",
+        "traceability": "Traceability",
+        "auditLog": "Audit Trail",
+        "admin": "Administration"
+    },
+    "auth": {
+        "login": "Login",
+        "register": "Register",
+        "logout": "Logout",
+        "username": "Username",
+        "password": "Password",
+        "email": "Email",
+        "fullName": "Full Name",
+        "loginSuccess": "Login successful",
+        "loginFailed": "Login failed"
+    },
+    "signature": {
+        "title": "Electronic Signature",
+        "userId": "User ID",
+        "password": "Password",
+        "comment": "Comment",
+        "meaning": "Signature Meaning",
+        "success": "Signature successful"
+    },
+    "common": {
+        "submit": "Submit",
+        "cancel": "Cancel",
+        "save": "Save",
+        "delete": "Delete",
+        "edit": "Edit",
+        "view": "View",
+        "search": "Search",
+        "reset": "Reset",
+        "confirm": "Confirm",
+        "loading": "Loading...",
+        "success": "Operation successful",
+        "error": "Operation failed"
+    }
+}
