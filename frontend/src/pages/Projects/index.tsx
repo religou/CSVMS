@@ -10,10 +10,13 @@ import projectService, {
 import { getErrorMessage } from '@/services/apiClient'
 import { useDictItems } from '@/hooks/useDictItems'
 import systemService, { type SystemItem } from '@/services/systems'
+import { resolveStageDisplay } from '@/utils/stageDisplay'
 
 export default function ProjectsPage() {
     const navigate = useNavigate()
-    const { items: statusItems } = useDictItems('project_status')
+    const { items: stageItems } = useDictItems('project_stage', {
+        enabledOnly: false,
+    })
     const [projects, setProjects] = useState<Project[]>([])
     const [loading, setLoading] = useState(false)
     const [modalOpen, setModalOpen] = useState(false)
@@ -88,15 +91,15 @@ export default function ProjectsPage() {
             ellipsis: true,
         },
         {
-            title: '状态',
-            dataIndex: 'status',
+            title: '阶段',
+            dataIndex: 'stage',
             width: 100,
-            render: (status: string) => {
-                const item = statusItems.find((s) => s.code === status)
-                return (
-                    <Tag color={item?.extra || 'default'}>
-                        {item?.label ?? status}
-                    </Tag>
+            render: (stage: string | null) => {
+                const display = resolveStageDisplay(stage, stageItems)
+                return display.matched && display.color ? (
+                    <Tag color={display.color}>{display.label}</Tag>
+                ) : (
+                    <Tag>{display.label}</Tag>
                 )
             },
         },
@@ -156,7 +159,7 @@ export default function ProjectsPage() {
                     showTotal: (total) => `共 ${total} 个项目`,
                 }}
                 onRow={(record) => ({
-                    onClick: () => navigate(`/projects/${record.id}/documents`),
+                    onClick: () => navigate(`/projects/${record.id}`),
                     style: { cursor: 'pointer' },
                 })}
             />

@@ -92,22 +92,23 @@ class TraceabilityService:
 
         return {"upstream": upstream, "downstream": downstream}
 
-    async def get_matrix(self, system_name: str | None = None) -> dict:
-        """获取完整追溯矩阵 + 覆盖率统计."""
+    async def get_matrix(self, project_id: str | None = None) -> dict:
+        """获取完整追溯矩阵 + 覆盖率统计（可选按项目范围隔离）."""
         # 获取所有相关文档
         doc_query = select(Document)
-        if system_name:
-            doc_query = doc_query.where(Document.system_name == system_name)
+        if project_id:
+            doc_query = doc_query.where(Document.project_id == project_id)
         doc_result = await self.db.execute(doc_query)
         documents = list(doc_result.scalars().all())
 
         doc_map = {d.id: d for d in documents}
         doc_ids = list(doc_map.keys())
 
-        # 获取所有链接
+        # 获取所有链接（限定源和目标均在当前范围内的文档集合中）
         link_result = await self.db.execute(
             select(TraceLink).where(
-                TraceLink.source_document_id.in_(doc_ids) | TraceLink.target_document_id.in_(doc_ids)
+                TraceLink.source_document_id.in_(doc_ids),
+                TraceLink.target_document_id.in_(doc_ids),
             )
         )
         links = list(link_result.scalars().all())

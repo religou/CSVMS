@@ -73,12 +73,15 @@ export const traceabilityService = {
       `/traceability/document/${documentId}`
     ),
 
-  getMatrix: (systemName?: string) =>
+  getMatrix: (projectId?: string) =>
     apiClient.get<TraceMatrixResponse>('/traceability/matrix', {
-      params: systemName ? { system_name: systemName } : undefined,
+      params: projectId ? { project_id: projectId } : undefined,
     }),
 };
 
 export const dashboardService = {
-  getStats: () => apiClient.get<DashboardStats>('/dashboard'),
+  getStats: (projectId?: string) =>
+    apiClient.get<DashboardStats>('/dashboard', {
+      params: projectId ? { project_id: projectId } : undefined,
+    }),
 };

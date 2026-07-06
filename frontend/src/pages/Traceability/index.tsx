@@ -1,29 +1,26 @@
 import { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import {
   Card,
   Table,
   Tag,
   Progress,
   Alert,
-  Space,
-  Input,
-  Button,
   Row,
   Col,
   message,
 } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
 import { traceabilityService, TraceMatrixResponse, TraceLinkItem } from '@/services/traceability';
 
 export default function TraceabilityPage() {
+  const { projectId } = useParams<{ projectId: string }>();
   const [data, setData] = useState<TraceMatrixResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [systemName, setSystemName] = useState<string>('');
 
   const fetchMatrix = async () => {
     setLoading(true);
     try {
-      const res = await traceabilityService.getMatrix(systemName || undefined);
+      const res = await traceabilityService.getMatrix(projectId);
       setData(res.data);
     } catch {
       message.error('加载追溯矩阵失败');
@@ -33,8 +30,9 @@ export default function TraceabilityPage() {
   };
 
   useEffect(() => {
+    if (!projectId) return;
     fetchMatrix();
-  }, []);
+  }, [projectId]);
 
   const linkColumns = [
     {
@@ -84,21 +82,6 @@ export default function TraceabilityPage() {
 
   return (
     <div>
-      <Card style={{ marginBottom: 16 }}>
-        <Space>
-          <Input
-            placeholder="按系统名称筛选"
-            value={systemName}
-            onChange={(e) => setSystemName(e.target.value)}
-            style={{ width: 200 }}
-            onPressEnter={fetchMatrix}
-          />
-          <Button icon={<ReloadOutlined />} onClick={fetchMatrix} loading={loading}>
-            刷新
-          </Button>
-        </Space>
-      </Card>
-
       {/* 覆盖率统计 */}
       {data && Object.keys(data.coverage).length > 0 && (
         <Card title="覆盖率统计" style={{ marginBottom: 16 }}>

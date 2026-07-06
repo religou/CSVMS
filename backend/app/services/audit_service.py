@@ -6,6 +6,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_log import AuditLog
+from app.models.document import Document
 
 
 class AuditService:
@@ -56,6 +57,7 @@ class AuditService:
         action: str | None = None,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
+        project_id: str | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[AuditLog], int]:
@@ -74,6 +76,13 @@ class AuditService:
             filters.append(AuditLog.timestamp >= start_time)
         if end_time:
             filters.append(AuditLog.timestamp <= end_time)
+        if project_id:
+            # 项目审计日志只包含该项目下文档相关的记录
+            filters.append(
+                AuditLog.resource_id.in_(
+                    select(Document.id).where(Document.project_id == project_id)
+                )
+            )
 
         total_result = await self.db.execute(
             select(func.count(AuditLog.id)).where(*filters)

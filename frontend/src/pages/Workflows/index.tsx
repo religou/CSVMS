@@ -4,7 +4,6 @@ import {
     Table,
     Tag,
     Tabs,
-    Space,
     Button,
     Modal,
     Form,
@@ -21,6 +20,11 @@ import {
 import { useDictItems } from '@/hooks/useDictItems'
 import { useProjectStore } from '@/stores/projectStore'
 
+const STEP_NAME_MAP: Record<string, string> = {
+    review: '审核',
+    approve: '批准',
+}
+
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
     pending: { label: '待处理', color: 'default' },
     in_progress: { label: '进行中', color: 'processing' },
@@ -31,16 +35,20 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
 
 export default function WorkflowsPage() {
     const { options: docTypeOptions } = useDictItems('doc_type')
+    const { options: projectRoleOptions } = useDictItems('project_role')
     const navigate = useNavigate()
     const currentProject = useProjectStore((state) => state.currentProject)
     const canManageWorkflows =
         currentProject?.current_user_permissions.includes(
             'project.workflows.manage',
         ) ?? false
+    const [activeTab, setActiveTab] = useState('pending')
     const [pendingList, setPendingList] = useState<WorkflowItem[]>([])
     const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
     const [loading, setLoading] = useState(false)
     const [templateModalOpen, setTemplateModalOpen] = useState(false)
+    const [editingTemplate, setEditingTemplate] =
+        useState<WorkflowTemplate | null>(null)
     const [form] = Form.useForm()
 
     useEffect(() => {
@@ -69,23 +77,62 @@ export default function WorkflowsPage() {
         }
     }
 
-    const handleCreateTemplate = async (values: any) => {
+    const openCreateTemplate = () => {
+        setEditingTemplate(null)
+        form.resetFields()
+        setTemplateModalOpen(true)
+    }
+
+    const openEditTemplate = (template: WorkflowTemplate) => {
+        setEditingTemplate(template)
+        form.setFieldsValue({
+            doc_type: template.doc_type,
+            name: template.name,
+            review_role: template.steps?.find(
+                (s) => s.step_type === 'review',
+            )?.project_role,
+            approve_role: template.steps?.find(
+                (s) => s.step_type === 'approve',
+            )?.project_role,
+        })
+        setTemplateModalOpen(true)
+    }
+
+    const closeTemplateModal = () => {
+        setTemplateModalOpen(false)
+        setEditingTemplate(null)
+        form.resetFields()
+    }
+
+    const handleSubmitTemplate = async (values: any) => {
+        const payload = {
+            name: values.name,
+            doc_type: values.doc_type,
+            steps: [
+                {
+                    name: STEP_NAME_MAP.review,
+                    step_type: 'review' as const,
+                    project_role: values.review_role,
+                },
+                {
+                    name: STEP_NAME_MAP.approve,
+                    step_type: 'approve' as const,
+                    project_role: values.approve_role,
+                },
+            ],
+        }
         try {
-            await workflowService.createTemplate({
-                name: values.name,
-                doc_type: values.doc_type,
-                description: values.description,
-                steps: values.steps || [
-                    { name: '审核', step_type: 'review' as const },
-                    { name: '批准', step_type: 'approve' as const },
-                ],
-            })
-            message.success('模板创建成功')
-            setTemplateModalOpen(false)
-            form.resetFields()
+            if (editingTemplate) {
+                await workflowService.updateTemplate(editingTemplate.id, payload)
+                message.success('模板更新成功')
+            } else {
+                await workflowService.createTemplate(payload)
+                message.success('模板创建成功')
+            }
+            closeTemplateModal()
             fetchTemplates()
         } catch {
-            message.error('创建失败')
+            message.error(editingTemplate ? '更新失败' : '创建失败')
         }
     }
 
@@ -133,37 +180,72 @@ export default function WorkflowsPage() {
         },
     ]
 
+    const roleLabel = (code?: string) =>
+        code
+            ? projectRoleOptions.find((opt) => opt.value === code)?.label ?? code
+            : '-'
+
+    const stepRole = (
+        steps: WorkflowTemplate['steps'],
+        stepType: 'review' | 'approve',
+    ) => roleLabel(steps?.find((s) => s.step_type === stepType)?.project_role)
+
     const templateColumns = [
-        { title: '模板名称', dataIndex: 'name' },
         {
-            title: '文档类型',
+            title: '适用文档类型',
             dataIndex: 'doc_type',
-            width: 100,
-            render: (val: string) => <Tag>{val}</Tag>,
-        },
-        { title: '描述', dataIndex: 'description', ellipsis: true },
-        {
-            title: '步骤',
-            dataIndex: 'steps',
-            render: (steps: any[]) =>
-                steps?.map((s) => s.name).join(' → ') || '-',
-        },
-        {
-            title: '状态',
-            dataIndex: 'is_active',
-            width: 80,
-            render: (val: boolean) => (
-                <Tag color={val ? 'green' : 'default'}>
-                    {val ? '启用' : '停用'}
+            width: 140,
+            render: (val: string) => (
+                <Tag>
+                    {docTypeOptions.find((opt) => opt.value === val)?.label ??
+                        val}
                 </Tag>
             ),
         },
+        { title: '模板名称', dataIndex: 'name' },
+        {
+            title: '审核',
+            key: 'review_role',
+            width: 120,
+            render: (_: unknown, record: WorkflowTemplate) =>
+                stepRole(record.steps, 'review'),
+        },
+        {
+            title: '批准',
+            key: 'approve_role',
+            width: 120,
+            render: (_: unknown, record: WorkflowTemplate) =>
+                stepRole(record.steps, 'approve'),
+        },
+        ...(canManageWorkflows
+            ? [
+                  {
+                      title: '操作',
+                      key: 'action',
+                      width: 80,
+                      render: (_: unknown, record: WorkflowTemplate) => (
+                          <a onClick={() => openEditTemplate(record)}>编辑</a>
+                      ),
+                  },
+              ]
+            : []),
     ]
 
     return (
         <div>
             <Tabs
-                defaultActiveKey="pending"
+                activeKey={activeTab}
+                onChange={setActiveTab}
+                tabBarExtraContent={
+                    activeTab === 'templates' && canManageWorkflows ? (
+                        <Button
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            onClick={openCreateTemplate}>
+                            新建模板
+                        </Button>
+                    ) : null
+                }
                 items={[
                     {
                         key: 'pending',
@@ -183,49 +265,26 @@ export default function WorkflowsPage() {
                         key: 'templates',
                         label: '流程模板',
                         children: (
-                            <div>
-                                <Space style={{ marginBottom: 16 }}>
-                                    {canManageWorkflows ? (
-                                        <Button
-                                            type="primary"
-                                            icon={<PlusOutlined />}
-                                            onClick={() =>
-                                                setTemplateModalOpen(true)
-                                            }>
-                                            新建模板
-                                        </Button>
-                                    ) : null}
-                                </Space>
-                                <Table
-                                    rowKey="id"
-                                    columns={templateColumns}
-                                    dataSource={templates}
-                                    pagination={false}
-                                />
-                            </div>
+                            <Table
+                                rowKey="id"
+                                columns={templateColumns}
+                                dataSource={templates}
+                                pagination={false}
+                            />
                         ),
                     },
                 ]}
             />
 
             <Modal
-                title="新建审批模板"
+                title={editingTemplate ? '编辑审批模板' : '新建审批模板'}
                 open={templateModalOpen}
-                onCancel={() => {
-                    setTemplateModalOpen(false)
-                    form.resetFields()
-                }}
+                onCancel={closeTemplateModal}
                 onOk={() => form.submit()}>
                 <Form
                     form={form}
                     layout="vertical"
-                    onFinish={handleCreateTemplate}>
-                    <Form.Item
-                        name="name"
-                        label="模板名称"
-                        rules={[{ required: true }]}>
-                        <Input placeholder="如：URS审批流程" />
-                    </Form.Item>
+                    onFinish={handleSubmitTemplate}>
                     <Form.Item
                         name="doc_type"
                         label="适用文档类型"
@@ -233,15 +292,43 @@ export default function WorkflowsPage() {
                         <Select
                             placeholder="选择文档类型"
                             options={docTypeOptions}
+                            onChange={(val) => {
+                                const label =
+                                    docTypeOptions.find(
+                                        (opt) => opt.value === val,
+                                    )?.label ?? val
+                                form.setFieldsValue({
+                                    name: `${label}审批流程`,
+                                })
+                            }}
                         />
                     </Form.Item>
-                    <Form.Item name="description" label="描述">
-                        <Input.TextArea rows={2} />
+                    <Form.Item
+                        name="name"
+                        label="模板名称"
+                        rules={[{ required: true }]}>
+                        <Input
+                            disabled
+                            placeholder="根据文档类型自动生成"
+                        />
                     </Form.Item>
-                    <Form.Item label="审批步骤">
-                        <div style={{ color: '#666', fontSize: 12 }}>
-                            默认: 审核 → 批准（两步流程）
-                        </div>
+                    <Form.Item
+                        name="review_role"
+                        label="审核"
+                        rules={[{ required: true }]}>
+                        <Select
+                            placeholder="选择审核角色"
+                            options={projectRoleOptions}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        name="approve_role"
+                        label="批准"
+                        rules={[{ required: true }]}>
+                        <Select
+                            placeholder="选择批准角色"
+                            options={projectRoleOptions}
+                        />
                     </Form.Item>
                 </Form>
             </Modal>

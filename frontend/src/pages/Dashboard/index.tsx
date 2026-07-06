@@ -1,6 +1,17 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Card, Row, Col, Statistic, Tag, Space } from 'antd'
+import { useNavigate, useParams } from 'react-router-dom'
+import {
+    Card,
+    Row,
+    Col,
+    Statistic,
+    Tag,
+    Space,
+    Select,
+    Button,
+    Alert,
+    message,
+} from 'antd'
 import {
     FileTextOutlined,
     CheckCircleOutlined,
@@ -10,6 +21,10 @@ import {
 } from '@ant-design/icons'
 import { dashboardService, DashboardStats } from '@/services/traceability'
 import { useDictItems } from '@/hooks/useDictItems'
+import { useProjectStore } from '@/stores/projectStore'
+import projectService from '@/services/projects'
+import { getErrorMessage } from '@/services/apiClient'
+import { deriveEnabledStageOptions, resolveStageDisplay } from '@/utils/stageDisplay'
 
 const WF_STATUS_LABELS: Record<string, string> = {
     pending: '待处理',
@@ -19,16 +34,111 @@ const WF_STATUS_LABELS: Record<string, string> = {
     cancelled: '已撤回',
 }
 
+function CurrentStageCard() {
+    const currentProject = useProjectStore((s) => s.currentProject)
+    const setCurrentProject = useProjectStore((s) => s.setCurrentProject)
+    const {
+        items: stageItems,
+        loading: stageLoading,
+        error: stageError,
+    } = useDictItems('project_stage', { enabledOnly: false })
+
+    const savedStage = currentProject?.stage ?? null
+    const [pendingStage, setPendingStage] = useState<string | null>(savedStage)
+    const [saving, setSaving] = useState(false)
+
+    // 项目切换或保存成功后，将本地待选值与已保存值同步
+    useEffect(() => {
+        setPendingStage(savedStage)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentProject?.id, savedStage])
+
+    const canManageStage =
+        currentProject?.current_user_permissions.includes(
+            'project.stage.manage',
+        ) ?? false
+
+    const controlsDisabled = canManageStage === false || !!stageError
+
+    const options = deriveEnabledStageOptions(stageError ? [] : stageItems)
+    if (
+        !stageError &&
+        savedStage &&
+        !options.some((opt) => opt.value === savedStage)
+    ) {
+        const savedDisplay = resolveStageDisplay(savedStage, stageItems)
+        options.push({
+            value: savedStage,
+            label: savedDisplay.label,
+        })
+    }
+
+    const handleSave = async () => {
+        if (!currentProject || pendingStage === savedStage) return
+        setSaving(true)
+        try {
+            const updated = await projectService.update(currentProject.id, {
+                stage: pendingStage,
+            })
+            setCurrentProject({ ...currentProject, stage: updated.stage })
+            message.success('阶段更新成功')
+        } catch (err) {
+            message.error(getErrorMessage(err, '阶段更新失败'))
+            setPendingStage(savedStage)
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    return (
+        <Card title="当前阶段" style={{ marginBottom: 24 }}>
+            {!!stageError && (
+                <Alert
+                    type="error"
+                    showIcon
+                    message="获取项目阶段选项失败"
+                    style={{ marginBottom: 12 }}
+                />
+            )}
+            <Space>
+                <Select
+                    style={{ width: 200 }}
+                    value={pendingStage ?? undefined}
+                    placeholder="未设置"
+                    allowClear
+                    disabled={controlsDisabled}
+                    loading={stageLoading}
+                    options={options}
+                    onChange={(value) => setPendingStage(value ?? null)}
+                    onClear={() => setPendingStage(null)}
+                />
+                <Button
+                    type="primary"
+                    disabled={
+                        controlsDisabled || pendingStage === savedStage
+                    }
+                    loading={saving}
+                    onClick={handleSave}>
+                    保存
+                </Button>
+            </Space>
+        </Card>
+    )
+}
+
 export default function DashboardPage() {
     const navigate = useNavigate()
+    const { projectId } = useParams<{ projectId: string }>()
     const { items: statusDictItems } = useDictItems('doc_status')
     const [stats, setStats] = useState<DashboardStats | null>(null)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
+        if (!projectId) return
+        setLoading(true)
         ;(async () => {
             try {
-                const res = await dashboardService.getStats()
+                const res = await dashboardService.getStats(projectId)
                 setStats(res.data)
             } catch {
                 // ignore
@@ -36,7 +146,7 @@ export default function DashboardPage() {
                 setLoading(false)
             }
         })()
-    }, [])
+    }, [projectId])
 
     if (loading || !stats) {
         return <Card loading />
@@ -44,10 +154,16 @@ export default function DashboardPage() {
 
     return (
         <div>
+            <CurrentStageCard />
+
             {/* 核心指标 */}
             <Row gutter={16} style={{ marginBottom: 24 }}>
                 <Col span={4}>
-                    <Card hoverable onClick={() => navigate('/documents')}>
+                    <Card
+                        hoverable
+                        onClick={() =>
+                            navigate(`/projects/${projectId}/documents`)
+                        }>
                         <Statistic
                             title="文档总数"
                             value={stats.total_documents}
@@ -56,7 +172,11 @@ export default function DashboardPage() {
                     </Card>
                 </Col>
                 <Col span={4}>
-                    <Card hoverable onClick={() => navigate('/workflows')}>
+                    <Card
+                        hoverable
+                        onClick={() =>
+                            navigate(`/projects/${projectId}/workflows`)
+                        }>
                         <Statistic
                             title="待我审批"
                             value={stats.pending_approvals}
@@ -71,7 +191,11 @@ export default function DashboardPage() {
                     </Card>
                 </Col>
                 <Col span={4}>
-                    <Card hoverable onClick={() => navigate('/documents')}>
+                    <Card
+                        hoverable
+                        onClick={() =>
+                            navigate(`/projects/${projectId}/documents`)
+                        }>
                         <Statistic
                             title="我的草稿"
                             value={stats.my_drafts}

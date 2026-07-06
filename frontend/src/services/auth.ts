@@ -5,13 +5,6 @@ export interface LoginRequest {
     password: string
 }
 
-export interface RegisterRequest {
-    username: string
-    email: string
-    full_name: string
-    password: string
-}
-
 export interface TokenResponse {
     access_token: string
     refresh_token: string
@@ -31,9 +24,6 @@ export interface UserResponse {
 export const authService = {
     login: (data: LoginRequest) =>
         apiClient.post<TokenResponse>('/auth/login', data),
-
-    register: (data: RegisterRequest) =>
-        apiClient.post<UserResponse>('/auth/register', data),
 
     getMe: () => apiClient.get<UserResponse>('/auth/me'),
 

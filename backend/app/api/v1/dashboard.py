@@ -14,10 +14,11 @@ router = APIRouter(prefix="/dashboard", tags=["仪表板"])
 
 @router.get("", response_model=DashboardResponse)
 async def get_dashboard(
+    project_id: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """获取仪表板统计数据."""
+    """获取仪表板统计数据（按项目范围隔离）."""
     service = DashboardService(db)
-    stats = await service.get_stats(user_id=current_user.id)
+    stats = await service.get_stats(user_id=current_user.id, project_id=project_id)
     return DashboardResponse(**stats)

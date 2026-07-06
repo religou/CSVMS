@@ -45,6 +45,10 @@ const PROJECT_ROUTE_TARGETS = [
         permissions: ['project.dashboard.menu', 'project.dashboard.view'],
     },
     {
+        path: 'members',
+        permissions: ['project.members.menu', 'project.members.view'],
+    },
+    {
         path: 'documents',
         permissions: ['project.documents.menu', 'project.documents.view'],
     },
@@ -59,10 +63,6 @@ const PROJECT_ROUTE_TARGETS = [
     {
         path: 'audit-log',
         permissions: ['project.audit_log.menu', 'project.audit_log.view'],
-    },
-    {
-        path: 'members',
-        permissions: ['project.members.menu', 'project.members.view'],
     },
 ]
 

@@ -81,4 +81,3 @@ npm run dev
 
 - 前端 Vite 已配置代理，`/api` 请求会自动转发到后端 8000 端口，无需额外配置 CORS。
 - 后端默认 JWT Secret 为 `change-me-in-production`，本地开发可保留，生产环境必须修改。
-

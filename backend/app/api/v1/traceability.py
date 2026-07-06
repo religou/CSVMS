@@ -86,13 +86,13 @@ async def get_document_traces(
 
 @router.get("/matrix", response_model=TraceMatrixResponse)
 async def get_trace_matrix(
-    system_name: str | None = None,
+    project_id: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """获取完整追溯矩阵（含覆盖率和Gap分析）."""
+    """获取完整追溯矩阵（含覆盖率和Gap分析，按项目范围隔离）."""
     service = TraceabilityService(db)
-    result = await service.get_matrix(system_name=system_name)
+    result = await service.get_matrix(project_id=project_id)
     return TraceMatrixResponse(
         links=[_link_to_response(l) for l in result["links"]],
         coverage={k: CoverageItem(**v) for k, v in result["coverage"].items()},

@@ -17,6 +17,7 @@ from app.schemas.workflow import (
     WorkflowSubmit,
     WorkflowTemplateCreate,
     WorkflowTemplateResponse,
+    WorkflowTemplateUpdate,
 )
 from app.services.workflow_service import WorkflowService
 
@@ -64,6 +65,26 @@ async def get_workflow_template(
     """获取工作流模板详情."""
     service = WorkflowService(db)
     template = await service.get_template(template_id)
+    return WorkflowTemplateResponse.model_validate(template)
+
+
+@router.put("/templates/{template_id}", response_model=WorkflowTemplateResponse)
+async def update_workflow_template(
+    template_id: str,
+    data: WorkflowTemplateUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """更新工作流模板."""
+    service = WorkflowService(db)
+    template = await service.update_template(
+        template_id,
+        name=data.name,
+        doc_type=data.doc_type,
+        description=data.description,
+        is_active=data.is_active,
+        steps=[s.model_dump() for s in data.steps] if data.steps is not None else None,
+    )
     return WorkflowTemplateResponse.model_validate(template)
 
 

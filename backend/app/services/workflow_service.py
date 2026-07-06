@@ -55,12 +55,55 @@ class WorkflowService:
                 step_type=step_data["step_type"],
                 role_id=step_data.get("role_id"),
                 assignee_id=step_data.get("assignee_id"),
+                project_role=step_data.get("project_role"),
             )
             self.db.add(step)
 
         await self.db.commit()
         await self.db.refresh(template)
         return template
+
+    async def update_template(
+        self,
+        template_id: str,
+        name: str | None = None,
+        doc_type: str | None = None,
+        description: str | None = None,
+        is_active: bool | None = None,
+        steps: list[dict] | None = None,
+    ) -> WorkflowTemplate:
+        """更新工作流模板."""
+        template = await self.get_template(template_id)
+
+        if name is not None:
+            template.name = name
+        if doc_type is not None:
+            template.doc_type = doc_type
+        if description is not None:
+            template.description = description
+        if is_active is not None:
+            template.is_active = is_active
+
+        if steps is not None:
+            # 全量替换步骤
+            for old_step in list(template.steps):
+                await self.db.delete(old_step)
+            await self.db.flush()
+
+            for i, step_data in enumerate(steps, start=1):
+                step = WorkflowTemplateStep(
+                    template_id=template.id,
+                    step_order=i,
+                    name=step_data["name"],
+                    step_type=step_data["step_type"],
+                    role_id=step_data.get("role_id"),
+                    assignee_id=step_data.get("assignee_id"),
+                    project_role=step_data.get("project_role"),
+                )
+                self.db.add(step)
+
+        await self.db.commit()
+        return await self.get_template(template_id)
 
     async def get_template(self, template_id: str) -> WorkflowTemplate:
         """获取工作流模板."""

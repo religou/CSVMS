@@ -30,7 +30,6 @@ def _doc_response(doc, author_name: str | None = None) -> DocumentResponse:
         status=doc.status,
         version=doc.version,
         summary=doc.summary,
-        system_name=doc.system_name,
         project_id=doc.project_id,
         author_id=doc.author_id,
         author_name=author_name or (doc.author.full_name if doc.author else None),
@@ -55,7 +54,6 @@ async def create_document(
 async def list_documents(
     doc_type: DocumentType | None = None,
     status: DocumentStatus | None = None,
-    system_name: str | None = None,
     keyword: str | None = None,
     project_id: str | None = None,
     page: int = Query(1, ge=1),
@@ -68,7 +66,6 @@ async def list_documents(
     documents, total = await service.list_documents(
         doc_type=doc_type,
         status=status,
-        system_name=system_name,
         keyword=keyword,
         project_id=project_id,
         page=page,
@@ -114,7 +111,6 @@ async def update_document(
         "title": old_doc.title,
         "content": old_doc.content,
         "summary": old_doc.summary,
-        "system_name": old_doc.system_name,
     }
 
     doc = await service.update_document(document_id, data, current_user.id)
@@ -125,7 +121,6 @@ async def update_document(
         "title": ("title", data.title),
         "content": ("content", data.content),
         "summary": ("summary", data.summary),
-        "system_name": ("system_name", data.system_name),
     }
     for field, (field_name, new_val) in field_map.items():
         if new_val is not None and new_val != old_values[field]:

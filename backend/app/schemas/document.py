@@ -12,7 +12,6 @@ class DocumentCreate(BaseModel):
 
     title: str
     doc_type: DocumentType
-    system_name: str | None = None
     summary: str | None = None
     content: str | None = None
     project_id: str | None = None
@@ -24,7 +23,6 @@ class DocumentUpdate(BaseModel):
     title: str | None = None
     content: str | None = None
     summary: str | None = None
-    system_name: str | None = None
 
 
 class DocumentResponse(BaseModel):
@@ -37,7 +35,6 @@ class DocumentResponse(BaseModel):
     status: DocumentStatus
     version: str
     summary: str | None = None
-    system_name: str | None = None
     project_id: str | None = None
     author_id: str
     author_name: str | None = None
@@ -72,7 +69,6 @@ class DocumentListQuery(BaseModel):
 
     doc_type: DocumentType | None = None
     status: DocumentStatus | None = None
-    system_name: str | None = None
     keyword: str | None = None
     page: int = 1
     page_size: int = 20

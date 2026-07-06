@@ -65,9 +65,6 @@ class Document(Base):
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # 关联系统（被验证的系统）
-    system_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-
     # 所属项目
     project_id: Mapped[str | None] = mapped_column(
         CHAR(36), ForeignKey("projects.id"), nullable=True, index=True

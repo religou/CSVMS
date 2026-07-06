@@ -40,7 +40,6 @@ class DocumentService:
             doc_number=doc_number,
             content=data.content,
             summary=data.summary,
-            system_name=data.system_name,
             project_id=data.project_id,
             status=DocumentStatus.DRAFT,
             version="0.1",
@@ -65,7 +64,6 @@ class DocumentService:
         self,
         doc_type: DocumentType | None = None,
         status: DocumentStatus | None = None,
-        system_name: str | None = None,
         keyword: str | None = None,
         project_id: str | None = None,
         page: int = 1,
@@ -80,8 +78,6 @@ class DocumentService:
             query = query.where(Document.doc_type == doc_type)
         if status:
             query = query.where(Document.status == status)
-        if system_name:
-            query = query.where(Document.system_name == system_name)
         if keyword:
             query = query.where(
                 or_(
@@ -116,8 +112,6 @@ class DocumentService:
             document.content = data.content
         if data.summary is not None:
             document.summary = data.summary
-        if data.system_name is not None:
-            document.system_name = data.system_name
 
         document.updated_at = datetime.now(timezone.utc)
         await self.db.commit()

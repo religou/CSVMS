@@ -42,6 +42,12 @@ export default function ProjectLayout() {
             permissionCode: 'project.dashboard.menu',
         },
         {
+            key: `${basePath}/members`,
+            icon: <TeamOutlined />,
+            label: '项目成员',
+            permissionCode: 'project.members.menu',
+        },
+        {
             key: `${basePath}/documents`,
             icon: <FileTextOutlined />,
             label: '文档管理',
@@ -64,12 +70,6 @@ export default function ProjectLayout() {
             icon: <AuditOutlined />,
             label: '审计日志',
             permissionCode: 'project.audit_log.menu',
-        },
-        {
-            key: `${basePath}/members`,
-            icon: <TeamOutlined />,
-            label: '项目成员',
-            permissionCode: 'project.members.menu',
         },
     ].filter((item) => currentUserPermissions.includes(item.permissionCode))
 

@@ -51,6 +51,7 @@ class Project(Base):
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(ProjectStatus), default=ProjectStatus.ACTIVE, index=True
     )
+    stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_by: Mapped[str] = mapped_column(CHAR(36), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

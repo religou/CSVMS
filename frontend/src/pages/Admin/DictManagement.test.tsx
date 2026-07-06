@@ -224,7 +224,7 @@ describe('DictManagement project role permission configuration', () => {
         render(<DictManagementPage />)
 
         expect(await screen.findByText('协调人')).toBeInTheDocument()
-        fireEvent.click(screen.getByRole('button', { name: /edit/i }))
+        fireEvent.click(screen.getByRole('button', { name: 'edit' }))
         fireEvent.click(
             screen.getByRole('button', { name: '按档位填充默认权限' }),
         )

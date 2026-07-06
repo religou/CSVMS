@@ -35,6 +35,7 @@ def _default_project_role_permission_codes(
             "project.documents.manage",
             "project.workflows.manage",
             "project.members.manage",
+            "project.stage.manage",
         ]
 
     if permission_profile == "member":
@@ -133,6 +134,18 @@ SEED_DATA = [
         ],
     },
     {
+        "code": "project_stage",
+        "name": "项目阶段",
+        "description": "验证项目当前所处的阶段",
+        "is_system": True,
+        "items": [
+            {"code": "requirement", "label": "需求", "extra": "blue", "sort_order": 1},
+            {"code": "design", "label": "设计", "extra": "purple", "sort_order": 2},
+            {"code": "testing", "label": "测试", "extra": "orange", "sort_order": 3},
+            {"code": "live", "label": "上线", "extra": "green", "sort_order": 4},
+        ],
+    },
+    {
         "code": "system_role",
         "name": "系统角色",
         "description": "系统级别的用户角色",
@@ -151,6 +164,9 @@ async def seed_dict() -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
         for cat_data in SEED_DATA:
+            # 使用副本，避免 pop 修改到模块级 SEED_DATA（否则重复调用会因缺少
+            # "items" 键而抛出 KeyError，破坏幂等性）。
+            cat_data = dict(cat_data)
             items_data = cat_data.pop("items")
             # 检查是否已存在
             result = await session.execute(

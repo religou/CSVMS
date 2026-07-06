@@ -17,6 +17,7 @@ class TemplateStepCreate(BaseModel):
     step_type: StepType
     role_id: str | None = None
     assignee_id: str | None = None
+    project_role: str | None = None
 
 
 class WorkflowTemplateCreate(BaseModel):
@@ -28,6 +29,16 @@ class WorkflowTemplateCreate(BaseModel):
     steps: list[TemplateStepCreate] = Field(..., min_length=1)
 
 
+class WorkflowTemplateUpdate(BaseModel):
+    """工作流模板更新."""
+
+    name: str | None = Field(None, max_length=100)
+    doc_type: str | None = Field(None, max_length=20)
+    description: str | None = None
+    is_active: bool | None = None
+    steps: list[TemplateStepCreate] | None = Field(None, min_length=1)
+
+
 class TemplateStepResponse(BaseModel):
     """模板步骤响应."""
 
@@ -37,6 +48,7 @@ class TemplateStepResponse(BaseModel):
     step_type: StepType
     role_id: str | None = None
     assignee_id: str | None = None
+    project_role: str | None = None
 
     model_config = {"from_attributes": True}
 

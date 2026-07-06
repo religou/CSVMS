@@ -68,6 +68,7 @@ export const auditService = {
     action?: string;
     start_time?: string;
     end_time?: string;
+    project_id?: string;
     page?: number;
     page_size?: number;
   }) => apiClient.get<AuditLogListResponse>('/audit-logs', { params }),

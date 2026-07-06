@@ -31,7 +31,6 @@ async def test_create_document(client: AsyncClient):
         json={
             "title": "测试URS文档",
             "doc_type": "URS",
-            "system_name": "TestSystem",
             "summary": "用户需求规格说明",
         },
         headers={"Authorization": f"Bearer {token}"},

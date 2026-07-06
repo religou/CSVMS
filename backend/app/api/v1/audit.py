@@ -22,6 +22,7 @@ async def list_audit_logs(
     action: str | None = None,
     start_time: datetime | None = None,
     end_time: datetime | None = None,
+    project_id: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -36,6 +37,7 @@ async def list_audit_logs(
         action=action,
         start_time=start_time,
         end_time=end_time,
+        project_id=project_id,
         page=page,
         page_size=page_size,
     )

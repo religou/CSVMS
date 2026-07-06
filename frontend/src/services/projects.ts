@@ -8,6 +8,7 @@ export interface Project {
     system_id: string | null
     description: string | null
     status: 'active' | 'completed' | 'archived'
+    stage: string | null
     created_by: string
     creator_name: string | null
     member_count: number
@@ -55,12 +56,14 @@ export interface CreateProjectData {
     name: string
     system_id: string
     description?: string
+    stage?: string | null
 }
 
 export interface UpdateProjectData {
     name?: string
     description?: string
     status?: 'active' | 'completed' | 'archived'
+    stage?: string | null
 }
 
 export interface ProjectSearchParams {

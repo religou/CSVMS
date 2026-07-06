@@ -41,6 +41,7 @@ class ProjectService:
                 "project.documents.manage",
                 "project.workflows.manage",
                 "project.members.manage",
+                "project.stage.manage",
             ]
 
         if permission_profile == ProjectRole.MEMBER:
@@ -103,8 +104,13 @@ class ProjectService:
         system_id: str,
         created_by: str,
         description: str | None = None,
+        stage: str | None = None,
     ) -> Project:
-        """创建验证项目."""
+        """创建验证项目.
+
+        未指定阶段（stage 为 None）时保存为空值；指定阶段编码时原样保存。
+        创建阶段不对阶段编码做字典有效性校验，与设计一致。
+        """
         from app.models.system import System
 
         # 查找关联系统获取 system_name
@@ -121,6 +127,7 @@ class ProjectService:
             system_id=system_id,
             system_name=system.name,
             description=description,
+            stage=stage,
             created_by=created_by,
         )
         self.db.add(project)
@@ -238,12 +245,37 @@ class ProjectService:
         users = list(result.scalars().unique().all())
         return users, total
 
+    async def _validate_stage_code(self, stage: str) -> None:
+        """校验阶段编码在 `project_stage` 分类下存在且已启用。"""
+        result = await self.db.execute(
+            select(DictItem)
+            .join(DictCategory, DictItem.category_id == DictCategory.id)
+            .where(
+                DictCategory.code == "project_stage",
+                DictItem.code == stage,
+                DictItem.is_enabled == True,  # noqa: E712
+            )
+        )
+        stage_item = result.scalar_one_or_none()
+        if not stage_item:
+            raise BusinessError("所选阶段不存在或已停用")
+
     async def update_project(
         self, project_id: str, user_id: str, **kwargs
     ) -> Project:
         """更新项目信息."""
         project = await self.get_project(project_id)
         await self._require_role(project_id, user_id, [ProjectRole.OWNER, ProjectRole.MANAGER])
+
+        stage_provided = "stage" in kwargs
+        stage_value = kwargs.pop("stage", None)
+
+        if stage_provided:
+            if stage_value is None:
+                project.stage = None
+            else:
+                await self._validate_stage_code(stage_value)
+                project.stage = stage_value
 
         for key, value in kwargs.items():
             if value is not None:
@@ -354,6 +386,10 @@ class ProjectService:
     ) -> list[str]:
         """获取当前用户在项目下的有效权限集合。"""
         member = await self.require_membership(project_id, user_id)
+        # 系统管理员拥有项目内的完整权限（包含 project.stage.manage），
+        # 直接返回代码内定义的 Owner 默认权限集，避免依赖可被修改的字典数据。
+        if self.is_admin:
+            return self._default_permission_codes_for_profile(ProjectRole.OWNER)
         return await self._resolve_permission_codes(member.role)
 
     async def _require_role(

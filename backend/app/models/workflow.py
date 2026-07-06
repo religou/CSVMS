@@ -98,7 +98,9 @@ class WorkflowTemplateStep(Base):
     step_type: Mapped[StepType] = mapped_column(Enum(StepType))
     role_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("roles.id"), nullable=True)
     assignee_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("users.id"), nullable=True)
-    # 如果 role_id 和 assignee_id 都为空，则由管理员手动指派
+    # 项目角色编码（来自 project_role 字典），用于指定由哪个项目角色执行该步骤
+    project_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # 如果 role_id、assignee_id 和 project_role 都为空，则由管理员手动指派
 
     # Relationships
     template: Mapped["WorkflowTemplate"] = relationship(back_populates="steps")

@@ -10,7 +10,6 @@ export interface DocumentItem {
     status: string
     version: string
     summary?: string
-    system_name?: string
     author_id: string
     author_name?: string
     created_at: string
@@ -42,7 +41,6 @@ export interface DocumentListResponse {
 export interface DocumentCreateRequest {
     title: string
     doc_type: string
-    system_name?: string
     summary?: string
     content?: string
     project_id?: string
@@ -52,7 +50,6 @@ export interface DocumentUpdateRequest {
     title?: string
     content?: string
     summary?: string
-    system_name?: string
 }
 
 // ---------- API ----------
@@ -61,7 +58,6 @@ export const documentService = {
     list: (params?: {
         doc_type?: string
         status?: string
-        system_name?: string
         keyword?: string
         project_id?: string
         page?: number

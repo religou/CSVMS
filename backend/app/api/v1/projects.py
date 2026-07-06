@@ -37,6 +37,7 @@ def _project_response(project) -> ProjectResponse:
         system_id=project.system_id,
         description=project.description,
         status=project.status,
+        stage=project.stage,
         created_by=project.created_by,
         creator_name=project.creator.full_name if project.creator else None,
         member_count=len(project.members) if project.members else 0,
@@ -80,6 +81,7 @@ async def create_project(
         name=data.name,
         system_id=data.system_id,
         description=data.description,
+        stage=data.stage,
         created_by=current_user.id,
     )
     return _project_response(project)
@@ -152,6 +154,7 @@ async def get_project(
         system_name=project.system_name,
         description=project.description,
         status=project.status,
+        stage=project.stage,
         created_by=project.created_by,
         creator_name=project.creator.full_name if project.creator else None,
         member_count=len(project.members) if project.members else 0,

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useParams } from 'react-router-dom'
 import {
     Table,
     Card,
@@ -45,6 +46,7 @@ const ACTION_COLORS: Record<string, string> = {
 }
 
 export default function AuditLogPage() {
+    const { projectId } = useParams<{ projectId: string }>()
     const [data, setData] = useState<AuditLogItem[]>([])
     const [total, setTotal] = useState(0)
     const [page, setPage] = useState(1)
@@ -63,6 +65,7 @@ export default function AuditLogPage() {
         try {
             const res = await auditService.list({
                 ...filters,
+                project_id: projectId,
                 page,
                 page_size: pageSize,
             })
@@ -73,7 +76,7 @@ export default function AuditLogPage() {
         } finally {
             setLoading(false)
         }
-    }, [filters, page, pageSize])
+    }, [filters, page, pageSize, projectId])
 
     useEffect(() => {
         fetchLogs()

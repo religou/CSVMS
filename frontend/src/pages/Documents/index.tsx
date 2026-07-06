@@ -67,7 +67,6 @@ export default function DocumentsPage() {
     const handleCreate = async (values: {
         title: string
         doc_type: string
-        system_name?: string
         summary?: string
     }) => {
         try {
@@ -131,7 +130,6 @@ export default function DocumentsPage() {
             render: (val: string) => getStatusTag(val),
         },
         { title: '版本', dataIndex: 'version', width: 70 },
-        { title: '系统', dataIndex: 'system_name', width: 120, ellipsis: true },
         { title: '作者', dataIndex: 'author_name', width: 100 },
         {
             title: '更新时间',
@@ -257,12 +255,6 @@ export default function DocumentsPage() {
                 onOk={() => form.submit()}>
                 <Form form={form} layout="vertical" onFinish={handleCreate}>
                     <Form.Item
-                        name="title"
-                        label="文档标题"
-                        rules={[{ required: true, message: '请输入标题' }]}>
-                        <Input placeholder="输入文档标题" />
-                    </Form.Item>
-                    <Form.Item
                         name="doc_type"
                         label="文档类型"
                         rules={[{ required: true, message: '请选择类型' }]}>
@@ -271,8 +263,11 @@ export default function DocumentsPage() {
                             options={docTypeOptions}
                         />
                     </Form.Item>
-                    <Form.Item name="system_name" label="关联系统">
-                        <Input placeholder="被验证的系统名称" />
+                    <Form.Item
+                        name="title"
+                        label="文档标题"
+                        rules={[{ required: true, message: '请输入标题' }]}>
+                        <Input placeholder="输入文档标题" />
                     </Form.Item>
                     <Form.Item name="summary" label="摘要">
                         <Input.TextArea rows={3} placeholder="文档简要说明" />

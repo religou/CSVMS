@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
     Card,
@@ -13,6 +13,9 @@ import {
     Timeline,
     Modal,
     Tabs,
+    Row,
+    Col,
+    Anchor,
 } from 'antd'
 import {
     EditOutlined,
@@ -21,10 +24,36 @@ import {
     RollbackOutlined,
     ArrowLeftOutlined,
 } from '@ant-design/icons'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeSlug from 'rehype-slug'
+import GithubSlugger from 'github-slugger'
+import RichTextEditor from '@/components/RichTextEditor'
 import { documentService, DocumentDetail } from '@/services/documents'
 import { workflowService, WorkflowItem } from '@/services/workflows'
 import { useDictItems } from '@/hooks/useDictItems'
 import { useProjectStore } from '@/stores/projectStore'
+
+interface HeadingItem {
+    id: string
+    text: string
+    level: number
+}
+
+function extractHeadings(markdown: string): HeadingItem[] {
+    const slugger = new GithubSlugger()
+    const headings: HeadingItem[] = []
+    const lines = markdown.split('\n')
+    for (const line of lines) {
+        const match = /^(#{1,6})\s+(.+?)\s*$/.exec(line)
+        if (match && match[1] && match[2]) {
+            const level = match[1].length
+            const text = match[2].trim()
+            headings.push({ id: slugger.slug(text), text, level })
+        }
+    }
+    return headings
+}
 
 export default function DocumentDetailPage() {
     const { id, projectId } = useParams<{ id: string; projectId: string }>()
@@ -146,6 +175,11 @@ export default function DocumentDetailPage() {
         })
     }
 
+    const headings = useMemo(
+        () => extractHeadings(doc?.content || ''),
+        [doc?.content],
+    )
+
     if (loading)
         return (
             <Spin
@@ -258,10 +292,7 @@ export default function DocumentDetailPage() {
                                         <Input.TextArea rows={2} />
                                     </Form.Item>
                                     <Form.Item name="content" label="正文内容">
-                                        <Input.TextArea
-                                            rows={16}
-                                            style={{ fontFamily: 'monospace' }}
-                                        />
+                                        <RichTextEditor />
                                     </Form.Item>
                                 </Form>
                             ) : (
@@ -276,9 +307,6 @@ export default function DocumentDetailPage() {
                                         </Descriptions.Item>
                                         <Descriptions.Item label="版本">
                                             {doc.version}
-                                        </Descriptions.Item>
-                                        <Descriptions.Item label="关联系统">
-                                            {doc.system_name || '-'}
                                         </Descriptions.Item>
                                         <Descriptions.Item label="作者">
                                             {doc.author_name}
@@ -301,19 +329,65 @@ export default function DocumentDetailPage() {
                                             </Descriptions.Item>
                                         )}
                                     </Descriptions>
-                                    <Card
-                                        type="inner"
-                                        title="正文"
-                                        style={{
-                                            whiteSpace: 'pre-wrap',
-                                            minHeight: 200,
-                                        }}>
-                                        {doc.content || (
-                                            <span style={{ color: '#999' }}>
-                                                暂无内容
-                                            </span>
+                                    <Row gutter={16}>
+                                        {headings.length > 0 && (
+                                            <Col
+                                                span={5}
+                                                style={{
+                                                    maxHeight: 600,
+                                                    overflow: 'auto',
+                                                }}>
+                                                <Card
+                                                    type="inner"
+                                                    title="目录"
+                                                    size="small">
+                                                    <Anchor
+                                                        affix={false}
+                                                        items={headings.map(
+                                                            (h) => ({
+                                                                key: h.id,
+                                                                href: `#${h.id}`,
+                                                                title: h.text,
+                                                                style: {
+                                                                    paddingLeft:
+                                                                        (h.level -
+                                                                            1) *
+                                                                        12,
+                                                                },
+                                                            }),
+                                                        )}
+                                                    />
+                                                </Card>
+                                            </Col>
                                         )}
-                                    </Card>
+                                        <Col span={headings.length > 0 ? 19 : 24}>
+                                            <Card
+                                                type="inner"
+                                                title="正文"
+                                                style={{ minHeight: 200 }}>
+                                                {doc.content ? (
+                                                    <div className="markdown-body">
+                                                        <ReactMarkdown
+                                                            remarkPlugins={[
+                                                                remarkGfm,
+                                                            ]}
+                                                            rehypePlugins={[
+                                                                rehypeSlug,
+                                                            ]}>
+                                                            {doc.content}
+                                                        </ReactMarkdown>
+                                                    </div>
+                                                ) : (
+                                                    <span
+                                                        style={{
+                                                            color: '#999',
+                                                        }}>
+                                                        暂无内容
+                                                    </span>
+                                                )}
+                                            </Card>
+                                        </Col>
+                                    </Row>
                                 </div>
                             ),
                         },

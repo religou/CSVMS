@@ -13,6 +13,7 @@ class ProjectCreate(BaseModel):
     name: str
     system_id: str
     description: str | None = None
+    stage: str | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -21,6 +22,7 @@ class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     status: ProjectStatus | None = None
+    stage: str | None = None
 
 
 class ProjectMemberAdd(BaseModel):
@@ -78,6 +80,7 @@ class ProjectResponse(BaseModel):
     system_id: str | None = None
     description: str | None = None
     status: ProjectStatus
+    stage: str | None = None
     created_by: str
     creator_name: str | None = None
     member_count: int = 0

@@ -9,6 +9,7 @@ export interface WorkflowTemplateStep {
   step_type: 'review' | 'approve';
   role_id?: string;
   assignee_id?: string;
+  project_role?: string;
 }
 
 export interface WorkflowTemplate {
@@ -61,7 +62,13 @@ export interface CreateTemplateRequest {
   name: string;
   doc_type: string;
   description?: string;
-  steps: { name: string; step_type: 'review' | 'approve'; role_id?: string; assignee_id?: string }[];
+  steps: {
+    name: string;
+    step_type: 'review' | 'approve';
+    role_id?: string;
+    assignee_id?: string;
+    project_role?: string;
+  }[];
 }
 
 // ---------- API ----------
@@ -76,6 +83,9 @@ export const workflowService = {
 
   createTemplate: (data: CreateTemplateRequest) =>
     apiClient.post<WorkflowTemplate>('/workflows/templates', data),
+
+  updateTemplate: (id: string, data: CreateTemplateRequest) =>
+    apiClient.put<WorkflowTemplate>(`/workflows/templates/${id}`, data),
 
   // Workflow operations
   submit: (documentId: string) =>
