@@ -16,6 +16,10 @@ import {
     Row,
     Col,
     Anchor,
+    Table,
+    Select,
+    Popconfirm,
+    Empty,
 } from 'antd'
 import {
     EditOutlined,
@@ -23,16 +27,35 @@ import {
     SendOutlined,
     RollbackOutlined,
     ArrowLeftOutlined,
+    PlusOutlined,
+    DeleteOutlined,
+    LinkOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
 import GithubSlugger from 'github-slugger'
 import RichTextEditor from '@/components/RichTextEditor'
-import { documentService, DocumentDetail } from '@/services/documents'
+import {
+    documentService,
+    DocumentDetail,
+    DocumentItem,
+    UrsItem,
+    UrsReference,
+    listUrsItems,
+    createUrsItem,
+    updateUrsItem,
+    deleteUrsItem,
+    listUrsReferences,
+    createUrsReference,
+    deleteUrsReference,
+} from '@/services/documents'
 import { workflowService, WorkflowItem } from '@/services/workflows'
 import { useDictItems } from '@/hooks/useDictItems'
 import { useProjectStore } from '@/stores/projectStore'
+import { formatUrsItemRows, formatUrsReferenceRows } from '@/utils/ursDisplay'
+
+const REFERENCING_DOC_TYPES = ['FS', 'DS', 'IQ', 'OQ', 'PQ']
 
 interface HeadingItem {
     id: string
@@ -67,6 +90,26 @@ export default function DocumentDetailPage() {
     const [saving, setSaving] = useState(false)
     const [form] = Form.useForm()
 
+    // URS 条目（doc_type === 'URS'）
+    const [ursItems, setUrsItems] = useState<UrsItem[]>([])
+    const [ursItemModalOpen, setUrsItemModalOpen] = useState(false)
+    const [editingUrsItem, setEditingUrsItem] = useState<UrsItem | null>(null)
+    const [ursItemForm] = Form.useForm()
+    const [ursItemSaving, setUrsItemSaving] = useState(false)
+
+    // 关联的 URS 条目（doc_type ∈ {FS,DS,IQ,OQ,PQ}）
+    const [ursReferences, setUrsReferences] = useState<UrsReference[]>([])
+    const [ursRefModalOpen, setUrsRefModalOpen] = useState(false)
+    const [ursRefSaving, setUrsRefSaving] = useState(false)
+    const [ursDocOptions, setUrsDocOptions] = useState<DocumentItem[]>([])
+    const [selectedUrsDocId, setSelectedUrsDocId] = useState<string | null>(
+        null,
+    )
+    const [selectableUrsItems, setSelectableUrsItems] = useState<UrsItem[]>(
+        [],
+    )
+    const [ursRefForm] = Form.useForm()
+
     const fetchData = async () => {
         if (!id) return
         setLoading(true)
@@ -82,10 +125,33 @@ export default function DocumentDetailPage() {
                 content: docRes.data.content || '',
                 summary: docRes.data.summary || '',
             })
+            if (docRes.data.doc_type === 'URS') {
+                fetchUrsItems(id)
+            } else if (REFERENCING_DOC_TYPES.includes(docRes.data.doc_type)) {
+                fetchUrsReferences(id)
+            }
         } catch {
             message.error('加载文档失败')
         } finally {
             setLoading(false)
+        }
+    }
+
+    const fetchUrsItems = async (documentId: string) => {
+        try {
+            const res = await listUrsItems(documentId)
+            setUrsItems(res.data)
+        } catch {
+            message.error('加载 URS 条目失败')
+        }
+    }
+
+    const fetchUrsReferences = async (documentId: string) => {
+        try {
+            const res = await listUrsReferences(documentId)
+            setUrsReferences(res.data)
+        } catch {
+            message.error('加载关联 URS 条目失败')
         }
     }
 
@@ -175,6 +241,115 @@ export default function DocumentDetailPage() {
         })
     }
 
+    // ---------- URS 条目维护（doc_type === 'URS'） ----------
+
+    const openCreateUrsItemModal = () => {
+        setEditingUrsItem(null)
+        ursItemForm.resetFields()
+        setUrsItemModalOpen(true)
+    }
+
+    const openEditUrsItemModal = (item: UrsItem) => {
+        setEditingUrsItem(item)
+        ursItemForm.setFieldsValue({
+            description: item.description,
+        })
+        setUrsItemModalOpen(true)
+    }
+
+    const handleUrsItemSubmit = async () => {
+        if (!id) return
+        try {
+            const values = await ursItemForm.validateFields()
+            setUrsItemSaving(true)
+            if (editingUrsItem) {
+                await updateUrsItem(id, editingUrsItem.id, {
+                    description: values.description,
+                })
+                message.success('条目已更新')
+            } else {
+                await createUrsItem(id, { description: values.description })
+                message.success('条目已新增')
+            }
+            setUrsItemModalOpen(false)
+            fetchUrsItems(id)
+        } catch (err: any) {
+            if (err?.errorFields) return
+            message.error(err?.response?.data?.detail || '保存失败')
+        } finally {
+            setUrsItemSaving(false)
+        }
+    }
+
+    const handleDeleteUrsItem = async (item: UrsItem) => {
+        if (!id) return
+        try {
+            await deleteUrsItem(id, item.id)
+            message.success('条目已删除')
+            fetchUrsItems(id)
+        } catch (err: any) {
+            message.error(err?.response?.data?.detail || '删除失败')
+        }
+    }
+
+    // ---------- 关联 URS 条目维护（doc_type ∈ {FS,DS,IQ,OQ,PQ}） ----------
+
+    const openUrsRefModal = async () => {
+        ursRefForm.resetFields()
+        setSelectedUrsDocId(null)
+        setSelectableUrsItems([])
+        setUrsRefModalOpen(true)
+        try {
+            const res = await documentService.list({
+                doc_type: 'URS',
+                project_id: doc?.project_id,
+                page_size: 200,
+            })
+            setUrsDocOptions(res.data.items)
+        } catch {
+            message.error('加载 URS 文档列表失败')
+        }
+    }
+
+    const handleUrsDocSelect = async (ursDocId: string) => {
+        setSelectedUrsDocId(ursDocId)
+        ursRefForm.setFieldsValue({ urs_item_id: undefined })
+        try {
+            const res = await listUrsItems(ursDocId)
+            setSelectableUrsItems(res.data)
+        } catch {
+            message.error('加载 URS 条目失败')
+        }
+    }
+
+    const handleUrsRefSubmit = async () => {
+        if (!id) return
+        try {
+            const values = await ursRefForm.validateFields()
+            setUrsRefSaving(true)
+            await createUrsReference(id, { urs_item_id: values.urs_item_id })
+            message.success('已关联')
+            setUrsRefModalOpen(false)
+            fetchUrsReferences(id)
+        } catch (err: any) {
+            if (err?.errorFields) return
+            message.error(err?.response?.data?.detail || '关联失败')
+        } finally {
+            setUrsRefSaving(false)
+        }
+    }
+
+    const handleDeleteUrsReference = async (reference: UrsReference) => {
+        if (!id) return
+        try {
+            await deleteUrsReference(id, reference.id)
+            message.success('已移除')
+            fetchUrsReferences(id)
+        } catch (err: any) {
+            message.error(err?.response?.data?.detail || '移除失败')
+        }
+    }
+
     const headings = useMemo(
         () => extractHeadings(doc?.content || ''),
         [doc?.content],
@@ -204,6 +379,187 @@ export default function DocumentDetailPage() {
         label: statusDictItem?.label || doc.status,
         color: statusDictItem?.extra || 'default',
     }
+
+    const ursItemRows = formatUrsItemRows(ursItems)
+    const ursReferenceRows = formatUrsReferenceRows(ursReferences)
+    const canManageUrsItems = isDraft && canManageDocuments
+
+    const ursItemTab =
+        doc.doc_type === 'URS'
+            ? [
+                  {
+                      key: 'ursItems',
+                      label: 'URS 条目',
+                      children: (
+                          <div>
+                              {canManageUrsItems && (
+                                  <div style={{ marginBottom: 16 }}>
+                                      <Button
+                                          type="primary"
+                                          icon={<PlusOutlined />}
+                                          onClick={openCreateUrsItemModal}>
+                                          新增条目
+                                      </Button>
+                                  </div>
+                              )}
+                              <Table
+                                  rowKey={(_, index) =>
+                                      ursItems[index!]?.id ?? String(index)
+                                  }
+                                  dataSource={ursItemRows}
+                                  pagination={false}
+                                  columns={[
+                                      {
+                                          title: '条目编号',
+                                          dataIndex: 'itemCode',
+                                          key: 'itemCode',
+                                          width: 160,
+                                      },
+                                      {
+                                          title: '条目描述',
+                                          dataIndex: 'description',
+                                          key: 'description',
+                                      },
+                                      ...(canManageUrsItems
+                                          ? [
+                                                {
+                                                    title: '操作',
+                                                    key: 'actions',
+                                                    width: 160,
+                                                    render: (
+                                                        _: unknown,
+                                                        __: unknown,
+                                                        index: number,
+                                                    ) => (
+                                                        <Space>
+                                                            <Button
+                                                                type="link"
+                                                                onClick={() =>
+                                                                    openEditUrsItemModal(
+                                                                        ursItems[
+                                                                            index
+                                                                        ]!,
+                                                                    )
+                                                                }>
+                                                                编辑
+                                                            </Button>
+                                                            <Popconfirm
+                                                                title="确认删除该条目？"
+                                                                onConfirm={() =>
+                                                                    handleDeleteUrsItem(
+                                                                        ursItems[
+                                                                            index
+                                                                        ]!,
+                                                                    )
+                                                                }>
+                                                                <Button
+                                                                    type="link"
+                                                                    danger
+                                                                    icon={
+                                                                        <DeleteOutlined />
+                                                                    }>
+                                                                    删除
+                                                                </Button>
+                                                            </Popconfirm>
+                                                        </Space>
+                                                    ),
+                                                },
+                                            ]
+                                          : []),
+                                  ]}
+                              />
+                          </div>
+                      ),
+                  },
+              ]
+            : []
+
+    const ursReferenceTab = REFERENCING_DOC_TYPES.includes(doc.doc_type)
+        ? [
+              {
+                  key: 'ursReferences',
+                  label: '关联的 URS 条目',
+                  children: (
+                      <div>
+                          {canManageUrsItems && (
+                              <div style={{ marginBottom: 16 }}>
+                                  <Button
+                                      type="primary"
+                                      icon={<LinkOutlined />}
+                                      onClick={openUrsRefModal}>
+                                      关联 URS 条目
+                                  </Button>
+                              </div>
+                          )}
+                          {ursReferenceRows.length === 0 ? (
+                              <Empty description="未关联 URS 条目" />
+                          ) : (
+                              <Table
+                                  rowKey={(_, index) =>
+                                      ursReferences[index!]?.id ??
+                                      String(index)
+                                  }
+                                  dataSource={ursReferenceRows}
+                                  pagination={false}
+                                  columns={[
+                                      {
+                                          title: '条目编号',
+                                          dataIndex: 'itemCode',
+                                          key: 'itemCode',
+                                          width: 140,
+                                      },
+                                      {
+                                          title: '条目描述',
+                                          dataIndex: 'description',
+                                          key: 'description',
+                                      },
+                                      {
+                                          title: '来源 URS 文档',
+                                          dataIndex: 'sourceDocNumber',
+                                          key: 'sourceDocNumber',
+                                          width: 160,
+                                      },
+                                      ...(canManageUrsItems
+                                          ? [
+                                                {
+                                                    title: '操作',
+                                                    key: 'actions',
+                                                    width: 100,
+                                                    render: (
+                                                        _: unknown,
+                                                        __: unknown,
+                                                        index: number,
+                                                    ) => (
+                                                        <Popconfirm
+                                                            title="确认移除该关联？"
+                                                            onConfirm={() =>
+                                                                handleDeleteUrsReference(
+                                                                    ursReferences[
+                                                                        index
+                                                                    ]!,
+                                                                )
+                                                            }>
+                                                            <Button
+                                                                type="link"
+                                                                danger
+                                                                icon={
+                                                                    <DeleteOutlined />
+                                                                }>
+                                                                移除
+                                                            </Button>
+                                                        </Popconfirm>
+                                                    ),
+                                                },
+                                            ]
+                                          : []),
+                                  ]}
+                              />
+                          )}
+                      </div>
+                  ),
+              },
+          ]
+        : []
 
     return (
         <div>
@@ -514,9 +870,74 @@ export default function DocumentDetailPage() {
                                     </div>
                                 ),
                         },
+                        ...ursItemTab,
+                        ...ursReferenceTab,
                     ]}
                 />
             </Card>
+
+            <Modal
+                title={editingUrsItem ? '编辑 URS 条目' : '新增 URS 条目'}
+                open={ursItemModalOpen}
+                onOk={handleUrsItemSubmit}
+                confirmLoading={ursItemSaving}
+                onCancel={() => setUrsItemModalOpen(false)}
+                destroyOnClose>
+                <Form form={ursItemForm} layout="vertical">
+                    {editingUrsItem && (
+                        <Form.Item label="条目编号">
+                            <span className="ant-form-text">
+                                {editingUrsItem.item_code}
+                            </span>
+                        </Form.Item>
+                    )}
+                    <Form.Item
+                        name="description"
+                        label="条目描述"
+                        rules={[
+                            { required: true, message: '请输入条目描述' },
+                        ]}>
+                        <Input.TextArea rows={3} />
+                    </Form.Item>
+                </Form>
+            </Modal>
+
+            <Modal
+                title="关联 URS 条目"
+                open={ursRefModalOpen}
+                onOk={handleUrsRefSubmit}
+                confirmLoading={ursRefSaving}
+                onCancel={() => setUrsRefModalOpen(false)}
+                destroyOnClose>
+                <Form form={ursRefForm} layout="vertical">
+                    <Form.Item label="URS 文档" required>
+                        <Select
+                            placeholder="请选择 URS 文档"
+                            value={selectedUrsDocId ?? undefined}
+                            onChange={handleUrsDocSelect}
+                            options={ursDocOptions.map((d) => ({
+                                label: `${d.doc_number} ${d.title}`,
+                                value: d.id,
+                            }))}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        name="urs_item_id"
+                        label="URS 条目"
+                        rules={[
+                            { required: true, message: '请选择 URS 条目' },
+                        ]}>
+                        <Select
+                            placeholder="请选择 URS 条目"
+                            disabled={!selectedUrsDocId}
+                            options={selectableUrsItems.map((item) => ({
+                                label: `${item.item_code} - ${item.description}`,
+                                value: item.id,
+                            }))}
+                        />
+                    </Form.Item>
+                </Form>
+            </Modal>
         </div>
     )
 }

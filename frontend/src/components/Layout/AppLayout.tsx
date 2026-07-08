@@ -119,7 +119,7 @@ export default function AppLayout() {
                     theme="dark"
                     mode="inline"
                     selectedKeys={[location.pathname]}
-                    defaultOpenKeys={['/admin']}
+                    defaultOpenKeys={[]}
                     items={menuItems}
                     onClick={({ key }) => navigate(key)}
                 />

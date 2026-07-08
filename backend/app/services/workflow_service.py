@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BusinessError
-from app.models.document import Document, DocumentStatus
+from app.models.document import Document, DocumentStatus, DocumentType
 from app.models.workflow import (
     ActionType,
     StepStatus,
@@ -19,6 +19,7 @@ from app.models.workflow import (
     WorkflowTemplate,
     WorkflowTemplateStep,
 )
+from app.services.document_service import DocumentService
 
 
 class WorkflowService:
@@ -162,6 +163,18 @@ class WorkflowService:
         )
         if existing.scalar_one_or_none():
             raise BusinessError("该文档已有进行中的审批流程")
+
+        # URS 引用数量校验：FS/DS/IQ/OQ/PQ 文档提交审批前必须已关联至少一个 URS 条目
+        if doc.doc_type in {
+            DocumentType.FS,
+            DocumentType.DS,
+            DocumentType.IQ,
+            DocumentType.OQ,
+            DocumentType.PQ,
+        }:
+            ref_count = await DocumentService(self.db).count_urs_references(document_id)
+            if ref_count == 0:
+                raise BusinessError("文档尚未关联任何 URS 条目，无法提交审批")
 
         # 获取该文档类型的工作流模板
         template = await self.get_template_for_doc_type(doc.doc_type.value)

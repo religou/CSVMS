@@ -10,7 +10,8 @@ import {
   Col,
   message,
 } from 'antd';
-import { traceabilityService, TraceMatrixResponse, TraceLinkItem } from '@/services/traceability';
+import { traceabilityService, TraceMatrixResponse, TraceLinkItem, UncoveredUrsItem } from '@/services/traceability';
+import { isUncoveredHighlighted } from '@/utils/ursDisplay';
 
 export default function TraceabilityPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -69,6 +70,31 @@ export default function TraceabilityPage() {
     },
   ];
 
+  const uncoveredUrsIds = (data?.uncovered_urs_items || []).map((item) => item.id);
+
+  const uncoveredUrsColumns = [
+    {
+      title: '条目编号',
+      dataIndex: 'item_code',
+      width: 160,
+      render: (val: string, record: UncoveredUrsItem) => (
+        <span style={{ color: isUncoveredHighlighted(record.id, uncoveredUrsIds) ? '#ff4d4f' : undefined }}>
+          {val}
+        </span>
+      ),
+    },
+    {
+      title: '条目描述',
+      dataIndex: 'description',
+      render: (val: string, record: UncoveredUrsItem) => (
+        <span style={{ color: isUncoveredHighlighted(record.id, uncoveredUrsIds) ? '#ff4d4f' : undefined }}>
+          {val}
+        </span>
+      ),
+    },
+    { title: '所属 URS 文档编号', dataIndex: 'doc_number', width: 160 },
+  ];
+
   const gapColumns = [
     { title: '文档编号', dataIndex: 'doc_number', width: 140 },
     { title: '标题', dataIndex: 'title', ellipsis: true },
@@ -101,6 +127,61 @@ export default function TraceabilityPage() {
               </Col>
             ))}
           </Row>
+        </Card>
+      )}
+
+      {/* URS 条目覆盖率 */}
+      {data && (
+        <Card title="URS 条目覆盖率" style={{ marginBottom: 16 }}>
+          <Row gutter={24}>
+            <Col span={6} style={{ marginBottom: 16 }}>
+              <Card size="small" title="条目覆盖率">
+                <Progress
+                  percent={data.urs_coverage.rate}
+                  status={
+                    data.urs_coverage.rate === 100
+                      ? 'success'
+                      : data.urs_coverage.rate > 50
+                      ? 'normal'
+                      : 'exception'
+                  }
+                  format={(p) => `${p}%`}
+                />
+                <div style={{ fontSize: 12, color: '#666' }}>
+                  {data.urs_coverage.covered}/{data.urs_coverage.total} 已覆盖
+                </div>
+              </Card>
+            </Col>
+            <Col span={6} style={{ marginBottom: 16 }}>
+              <Card size="small" title="未覆盖条目数">
+                <div style={{ fontSize: 24, color: data.uncovered_urs_items.length > 0 ? '#ff4d4f' : undefined }}>
+                  {data.uncovered_urs_items.length}
+                </div>
+              </Card>
+            </Col>
+          </Row>
+        </Card>
+      )}
+
+      {/* 未覆盖 URS 条目 */}
+      {data && data.uncovered_urs_items.length > 0 && (
+        <Card
+          title={<span style={{ color: '#ff4d4f' }}>未覆盖 URS 条目 ({data.uncovered_urs_items.length})</span>}
+          style={{ marginBottom: 16 }}
+        >
+          <Alert
+            message="以下 URS 条目尚未被任何 FS/DS/IQ/OQ/PQ 文档引用，建议及时补充追溯关系"
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+          />
+          <Table
+            rowKey="id"
+            columns={uncoveredUrsColumns}
+            dataSource={data.uncovered_urs_items}
+            pagination={false}
+            size="small"
+          />
         </Card>
       )}
 

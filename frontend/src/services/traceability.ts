@@ -34,10 +34,27 @@ export interface GapItem {
   missing_targets: string[];
 }
 
+export interface UrsCoverageItem {
+  total: number;
+  covered: number;
+  uncovered: number;
+  rate: number;
+}
+
+export interface UncoveredUrsItem {
+  id: string;
+  item_code: string;
+  description: string;
+  document_id: string;
+  doc_number: string;
+}
+
 export interface TraceMatrixResponse {
   links: TraceLinkItem[];
   coverage: Record<string, CoverageItem>;
   gaps: GapItem[];
+  urs_coverage: UrsCoverageItem;
+  uncovered_urs_items: UncoveredUrsItem[];
 }
 
 export interface DashboardStats {

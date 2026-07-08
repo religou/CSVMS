@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import BusinessError
 from app.models.document import Document, DocumentType
 from app.models.traceability import TraceLink
+from app.models.urs import URSItem, URSReference
 
 
 # 标准追溯链：URS → FS → DS → IQ/OQ/PQ
@@ -159,9 +160,58 @@ class TraceabilityService:
                         "missing_targets": expected_targets,
                     })
 
+        # URS 条目级覆盖率统计（按 project_id 范围隔离，范围隔离体现在 URS_Document/URS_Item 上）
+        urs_docs = by_type.get("URS", [])
+        urs_doc_ids = [d.id for d in urs_docs]
+
+        urs_items: list[URSItem] = []
+        if urs_doc_ids:
+            item_result = await self.db.execute(
+                select(URSItem).where(URSItem.document_id.in_(urs_doc_ids))
+            )
+            urs_items = list(item_result.scalars().all())
+
+        urs_item_ids = [item.id for item in urs_items]
+
+        urs_covered_item_ids: set[str] = set()
+        if urs_item_ids:
+            ref_result = await self.db.execute(
+                select(URSReference).where(URSReference.urs_item_id.in_(urs_item_ids))
+            )
+            urs_refs = list(ref_result.scalars().all())
+            urs_covered_item_ids = {ref.urs_item_id for ref in urs_refs}
+
+        total_urs_items = len(urs_items)
+        covered_urs_items = sum(1 for item in urs_items if item.id in urs_covered_item_ids)
+        uncovered_urs_items_count = total_urs_items - covered_urs_items
+        urs_rate = (
+            round(covered_urs_items / total_urs_items * 100, 1) if total_urs_items > 0 else 0
+        )
+
+        urs_coverage = {
+            "total": total_urs_items,
+            "covered": covered_urs_items,
+            "uncovered": uncovered_urs_items_count,
+            "rate": urs_rate,
+        }
+
+        uncovered_urs_items = [
+            {
+                "id": item.id,
+                "item_code": item.item_code,
+                "description": item.description,
+                "document_id": item.document_id,
+                "doc_number": doc_map[item.document_id].doc_number,
+            }
+            for item in urs_items
+            if item.id not in urs_covered_item_ids
+        ]
+
         return {
             "documents": documents,
             "links": links,
             "coverage": coverage,
             "gaps": gaps,
+            "urs_coverage": urs_coverage,
+            "uncovered_urs_items": uncovered_urs_items,
         }

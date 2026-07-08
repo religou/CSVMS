@@ -56,12 +56,33 @@ class GapItem(BaseModel):
     missing_targets: list[str]
 
 
+class UrsCoverageItem(BaseModel):
+    """URS 条目级覆盖率统计."""
+
+    total: int
+    covered: int
+    uncovered: int
+    rate: float
+
+
+class UncoveredUrsItem(BaseModel):
+    """未被任何 Referencing_Document 引用的 URS 条目."""
+
+    id: str
+    item_code: str
+    description: str
+    document_id: str
+    doc_number: str
+
+
 class TraceMatrixResponse(BaseModel):
     """追溯矩阵响应."""
 
     links: list[TraceLinkResponse]
     coverage: dict[str, CoverageItem]
     gaps: list[GapItem]
+    urs_coverage: UrsCoverageItem
+    uncovered_urs_items: list[UncoveredUrsItem]
 
 
 class DashboardResponse(BaseModel):

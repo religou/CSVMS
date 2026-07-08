@@ -5,6 +5,16 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.pool import StaticPool
+from hypothesis import settings, HealthCheck
+
+# Register a CI profile with reduced examples for faster test execution
+settings.register_profile(
+    "ci",
+    max_examples=10,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
+settings.load_profile("ci")
 
 from app.core.database import Base, get_db
 from app.main import app

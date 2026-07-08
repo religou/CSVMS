@@ -12,6 +12,8 @@ from app.schemas.traceability import (
     TraceMatrixResponse,
     CoverageItem,
     GapItem,
+    UrsCoverageItem,
+    UncoveredUrsItem,
 )
 from app.services.traceability_service import TraceabilityService
 
@@ -97,4 +99,6 @@ async def get_trace_matrix(
         links=[_link_to_response(l) for l in result["links"]],
         coverage={k: CoverageItem(**v) for k, v in result["coverage"].items()},
         gaps=[GapItem(**g) for g in result["gaps"]],
+        urs_coverage=UrsCoverageItem(**result["urs_coverage"]),
+        uncovered_urs_items=[UncoveredUrsItem(**u) for u in result["uncovered_urs_items"]],
     )

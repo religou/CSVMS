@@ -7,12 +7,20 @@ from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.document import DocumentType, DocumentStatus
+from app.models.urs import URSItem, URSReference
 from app.schemas.document import (
     DocumentCreate,
     DocumentDetailResponse,
     DocumentResponse,
     DocumentUpdate,
     DocumentVersionResponse,
+)
+from app.schemas.urs import (
+    URSItemCreate,
+    URSItemUpdate,
+    URSItemResponse,
+    URSReferenceCreate,
+    URSReferenceResponse,
 )
 from app.services.document_service import DocumentService
 from app.services.audit_service import AuditService
@@ -57,7 +65,7 @@ async def list_documents(
     keyword: str | None = None,
     project_id: str | None = None,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
@@ -161,3 +169,120 @@ async def get_document_versions(
     service = DocumentService(db)
     versions = await service.get_versions(document_id)
     return [DocumentVersionResponse.model_validate(v) for v in versions]
+
+
+def _urs_item_response(item: URSItem) -> URSItemResponse:
+    """Build URSItemResponse from ORM model."""
+    return URSItemResponse(
+        id=item.id,
+        document_id=item.document_id,
+        item_code=item.item_code,
+        description=item.description,
+        created_at=item.created_at,
+    )
+
+
+def _urs_reference_response(reference: URSReference) -> URSReferenceResponse:
+    """Build URSReferenceResponse from ORM model."""
+    urs_item = reference.urs_item
+    source_document = urs_item.document if urs_item else None
+    return URSReferenceResponse(
+        id=reference.id,
+        document_id=reference.document_id,
+        urs_item_id=reference.urs_item_id,
+        item_code=urs_item.item_code if urs_item else "",
+        description=urs_item.description if urs_item else "",
+        source_document_id=urs_item.document_id if urs_item else "",
+        source_doc_number=source_document.doc_number if source_document else "",
+        created_at=reference.created_at,
+    )
+
+
+@router.post("/{document_id}/urs-items", response_model=URSItemResponse)
+async def create_urs_item(
+    document_id: str,
+    data: URSItemCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """新增 URS 条目."""
+    service = DocumentService(db)
+    item = await service.create_urs_item(document_id, data, current_user)
+    return _urs_item_response(item)
+
+
+@router.get("/{document_id}/urs-items", response_model=list[URSItemResponse])
+async def list_urs_items(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """获取指定文档下的 URS 条目列表."""
+    service = DocumentService(db)
+    items = await service.list_urs_items(document_id)
+    return [_urs_item_response(item) for item in items]
+
+
+@router.put("/{document_id}/urs-items/{item_id}", response_model=URSItemResponse)
+async def update_urs_item(
+    document_id: str,
+    item_id: str,
+    data: URSItemUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """更新 URS 条目."""
+    service = DocumentService(db)
+    item = await service.update_urs_item(document_id, item_id, data, current_user)
+    return _urs_item_response(item)
+
+
+@router.delete("/{document_id}/urs-items/{item_id}")
+async def delete_urs_item(
+    document_id: str,
+    item_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """删除 URS 条目."""
+    service = DocumentService(db)
+    await service.delete_urs_item(document_id, item_id, current_user)
+    return {"message": "URS 条目已删除"}
+
+
+@router.post("/{document_id}/urs-references", response_model=URSReferenceResponse)
+async def create_urs_reference(
+    document_id: str,
+    data: URSReferenceCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """新增 URS 引用."""
+    service = DocumentService(db)
+    reference = await service.create_urs_reference(document_id, data, current_user)
+    return _urs_reference_response(reference)
+
+
+@router.get("/{document_id}/urs-references", response_model=list[URSReferenceResponse])
+async def list_urs_references(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """获取指定文档下的 URS 引用列表."""
+    service = DocumentService(db)
+    references = await service.list_urs_references(document_id)
+    return [_urs_reference_response(reference) for reference in references]
+
+
+@router.delete("/{document_id}/urs-references/{reference_id}")
+async def delete_urs_reference(
+    document_id: str,
+    reference_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """删除 URS 引用."""
+    service = DocumentService(db)
+    await service.delete_urs_reference(document_id, reference_id, current_user)
+    return {"message": "URS 引用已删除"}

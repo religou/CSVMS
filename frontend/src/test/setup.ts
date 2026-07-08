@@ -34,9 +34,22 @@ Object.defineProperty(window, 'matchMedia', {
 
 Object.defineProperty(window, 'getComputedStyle', {
     writable: true,
-    value: vi.fn().mockImplementation((element: Element) =>
-        originalGetComputedStyle(element),
-    ),
+    value: vi.fn().mockImplementation((element: Element) => {
+        const style = originalGetComputedStyle(element)
+        // Ant Design rc-table/rc-util uses getPropertyValue and scrollbarColor
+        // which are not supported in JSDOM - provide safe defaults
+        return {
+            ...style,
+            scrollbarColor: '',
+            getPropertyValue: (prop: string) => {
+                try {
+                    return style.getPropertyValue(prop)
+                } catch {
+                    return ''
+                }
+            },
+        }
+    }),
 })
 
 Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {

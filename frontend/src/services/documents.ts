@@ -10,6 +10,7 @@ export interface DocumentItem {
     status: string
     version: string
     summary?: string
+    project_id?: string
     author_id: string
     author_name?: string
     created_at: string
@@ -52,6 +53,37 @@ export interface DocumentUpdateRequest {
     summary?: string
 }
 
+export interface UrsItem {
+    id: string
+    document_id: string
+    item_code: string
+    description: string
+    created_at: string
+}
+
+export interface UrsItemCreateRequest {
+    description: string
+}
+
+export interface UrsItemUpdateRequest {
+    description?: string
+}
+
+export interface UrsReference {
+    id: string
+    document_id: string
+    urs_item_id: string
+    item_code: string
+    description: string
+    source_document_id: string
+    source_doc_number: string
+    created_at: string
+}
+
+export interface UrsReferenceCreateRequest {
+    urs_item_id: string
+}
+
 // ---------- API ----------
 
 export const documentService = {
@@ -77,3 +109,29 @@ export const documentService = {
     getVersions: (id: string) =>
         apiClient.get<DocumentVersion[]>(`/documents/${id}/versions`),
 }
+
+export const listUrsItems = (documentId: string) =>
+    apiClient.get<UrsItem[]>(`/documents/${documentId}/urs-items`)
+
+export const createUrsItem = (documentId: string, data: UrsItemCreateRequest) =>
+    apiClient.post<UrsItem>(`/documents/${documentId}/urs-items`, data)
+
+export const updateUrsItem = (
+    documentId: string,
+    itemId: string,
+    data: UrsItemUpdateRequest
+) => apiClient.put<UrsItem>(`/documents/${documentId}/urs-items/${itemId}`, data)
+
+export const deleteUrsItem = (documentId: string, itemId: string) =>
+    apiClient.delete(`/documents/${documentId}/urs-items/${itemId}`)
+
+export const listUrsReferences = (documentId: string) =>
+    apiClient.get<UrsReference[]>(`/documents/${documentId}/urs-references`)
+
+export const createUrsReference = (
+    documentId: string,
+    data: UrsReferenceCreateRequest
+) => apiClient.post<UrsReference>(`/documents/${documentId}/urs-references`, data)
+
+export const deleteUrsReference = (documentId: string, referenceId: string) =>
+    apiClient.delete(`/documents/${documentId}/urs-references/${referenceId}`)

@@ -19,6 +19,7 @@ from app.models.audit_log import AuditLog
 from app.models.traceability import TraceLink
 from app.models.dictionary import DictCategory, DictItem
 from app.models.system import System
+from app.models.urs import URSItem, URSReference
 
 __all__ = [
     "User", "Role", "Permission", "user_roles", "role_permissions",
@@ -31,4 +32,5 @@ __all__ = [
     "AuditLog",
     "TraceLink",
     "System",
+    "URSItem", "URSReference",
 ]

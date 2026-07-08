@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Button, Tag, Modal, Form, Input, Select, message, Table } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
+import { Button, Tag, Modal, Form, Input, Select, message, Table, Card, Space } from 'antd'
+import { PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import projectService, {
     type Project,
@@ -22,7 +22,6 @@ export default function ProjectsPage() {
     const [modalOpen, setModalOpen] = useState(false)
     const [form] = Form.useForm<CreateProjectData>()
     const [creating, setCreating] = useState(false)
-    const [keyword, setKeyword] = useState('')
     const [systems, setSystems] = useState<SystemItem[]>([])
 
     const fetchProjects = useCallback(async (kw?: string) => {
@@ -51,7 +50,6 @@ export default function ProjectsPage() {
     }, [])
 
     const handleSearch = (value: string) => {
-        setKeyword(value)
         fetchProjects(value.trim() || undefined)
     }
 
@@ -119,50 +117,44 @@ export default function ProjectsPage() {
     ]
 
     return (
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px' }}>
-            <div
-                style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 16,
-                }}>
-                <h2 style={{ margin: 0 }}>验证项目</h2>
-                <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    onClick={() => setModalOpen(true)}>
-                    新建项目
-                </Button>
-            </div>
-
-            <Input.Search
-                placeholder="搜索项目名称、编号或系统"
-                allowClear
-                enterButton
-                value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
-                onSearch={handleSearch}
-                style={{ marginBottom: 16, maxWidth: 400 }}
-            />
-
-            <Table<Project>
-                columns={columns}
-                dataSource={projects}
-                rowKey="id"
-                loading={loading}
-                pagination={{
-                    defaultPageSize: 20,
-                    pageSizeOptions: ['20', '50', '100'],
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total) => `共 ${total} 个项目`,
-                }}
-                onRow={(record) => ({
-                    onClick: () => navigate(`/projects/${record.id}`),
-                    style: { cursor: 'pointer' },
-                })}
-            />
+        <div style={{ padding: 24 }}>
+            <Card
+                title="验证项目"
+                extra={
+                    <Space>
+                        <Input.Search
+                            placeholder="搜索项目名称、编号或系统"
+                            allowClear
+                            onSearch={handleSearch}
+                            style={{ width: 240 }}
+                            prefix={<SearchOutlined />}
+                        />
+                        <Button
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            onClick={() => setModalOpen(true)}>
+                            新建项目
+                        </Button>
+                    </Space>
+                }>
+                <Table<Project>
+                    columns={columns}
+                    dataSource={projects}
+                    rowKey="id"
+                    loading={loading}
+                    size="small"
+                    pagination={{
+                        defaultPageSize: 20,
+                        pageSizeOptions: ['20', '50', '100'],
+                        showSizeChanger: true,
+                        showQuickJumper: true,
+                        showTotal: (total) => `共 ${total} 个项目`,
+                    }}
+                    onRow={(record) => ({
+                        onClick: () => navigate(`/projects/${record.id}`),
+                    })}
+                />
+            </Card>
 
             <Modal
                 title="新建验证项目"
