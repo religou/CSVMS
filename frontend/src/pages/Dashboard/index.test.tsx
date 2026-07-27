@@ -40,9 +40,6 @@ vi.mock('@/services/traceability', () => ({
         getStats: vi.fn(),
     },
     traceabilityService: {
-        createLink: vi.fn(),
-        deleteLink: vi.fn(),
-        getDocumentTraces: vi.fn(),
         getMatrix: vi.fn(),
     },
 }))

@@ -677,13 +677,16 @@ export default function DocumentDetailPage() {
                                                 doc.updated_at,
                                             ).toLocaleString('zh-CN')}
                                         </Descriptions.Item>
-                                        {doc.summary && (
-                                            <Descriptions.Item
-                                                label="摘要"
-                                                span={2}>
-                                                {doc.summary}
-                                            </Descriptions.Item>
-                                        )}
+                                        <Descriptions.Item
+                                            label="摘要"
+                                            span={2}>
+                                            {doc.summary || (
+                                                <span
+                                                    style={{ color: '#999' }}>
+                                                    暂无摘要
+                                                </span>
+                                            )}
+                                        </Descriptions.Item>
                                     </Descriptions>
                                     <Row gutter={16}>
                                         {headings.length > 0 && (
@@ -747,6 +750,8 @@ export default function DocumentDetailPage() {
                                 </div>
                             ),
                         },
+                        ...ursItemTab,
+                        ...ursReferenceTab,
                         {
                             key: 'workflow',
                             label: '审批流程',
@@ -870,8 +875,6 @@ export default function DocumentDetailPage() {
                                     </div>
                                 ),
                         },
-                        ...ursItemTab,
-                        ...ursReferenceTab,
                     ]}
                 />
             </Card>

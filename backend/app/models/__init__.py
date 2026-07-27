@@ -16,7 +16,6 @@ from app.models.workflow import (
 )
 from app.models.signature import ElectronicSignature
 from app.models.audit_log import AuditLog
-from app.models.traceability import TraceLink
 from app.models.dictionary import DictCategory, DictItem
 from app.models.system import System
 from app.models.urs import URSItem, URSReference
@@ -30,7 +29,6 @@ __all__ = [
     "WorkflowStatus", "StepType", "StepStatus", "ActionType",
     "ElectronicSignature",
     "AuditLog",
-    "TraceLink",
     "System",
     "URSItem", "URSReference",
 ]

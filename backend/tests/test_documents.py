@@ -1286,3 +1286,425 @@ async def test_property_urs_reference_creation_determined_by_preconditions(
             select(URSReference).where(URSReference.document_id == ref_document.id)
         )
         assert len(result.scalars().all()) == references_before
+
+
+# ---------------------------------------------------------------------------
+# Property-based tests: 自动编号 (urs-auto-numbering)
+# Task 2.7 - Property 3: 自动生成覆盖用户输入 (Auto-generation Overrides Input)
+# ---------------------------------------------------------------------------
+
+import re as _re_auto_num
+
+
+@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    existing_count=st.integers(min_value=0, max_value=3),
+    candidate_code=st.one_of(
+        st.none(),
+        st.text(max_size=20),
+    ),
+    candidate_description=st.text(min_size=1, max_size=30).filter(
+        lambda s: s.strip() != ""
+    ),
+)
+@pytest.mark.asyncio
+async def test_property_auto_generation_overrides_user_input(
+    db_session: AsyncSession,
+    existing_count: int,
+    candidate_code,
+    candidate_description: str,
+):
+    """
+    Feature: urs-auto-numbering, Property 3: 自动生成覆盖用户输入
+    (Auto-generation Overrides Input)
+
+    For any 创建 URS_Item 的请求，无论请求体中是否包含 item_code 字段或其值为何，
+    创建成功后返回的 item_code 始终为系统自动生成的编号（匹配格式
+    `{doc_number}-{NNN}`），不受用户输入影响。
+
+    Validates: Requirements 1.5, 3.1, 3.2
+    """
+    suffix = uuid.uuid4().hex[:12]
+    admin = await _create_admin_user(db_session, username=f"prop3an-admin-{suffix}")
+    doc_number = f"URS-PROP3AN-{suffix}"
+    document = await _create_draft_urs_document(
+        db_session, author_id=admin.id, doc_number=doc_number
+    )
+
+    # 预置已存在的条目（使用自动编号格式），确定预期的下一个序号。
+    for i in range(existing_count):
+        db_session.add(
+            URSItem(
+                document_id=document.id,
+                item_code=f"{doc_number}-{i + 1:03d}",
+                description="既有条目描述",
+                created_by=admin.id,
+            )
+        )
+    await db_session.commit()
+
+    service = DocumentService(db_session)
+
+    item = await service.create_urs_item(
+        document.id,
+        URSItemCreate(item_code=candidate_code, description=candidate_description),
+        admin,
+    )
+
+    # 无论用户传入何值，item_code 均为系统自动生成，匹配 {doc_number}-{NNN} 格式。
+    assert _re_auto_num.match(
+        rf"^{_re_auto_num.escape(doc_number)}-\d{{3}}$", item.item_code
+    )
+
+    # 自动生成值不等于用户输入（除非用户碰巧输入了相同的自动格式，
+    # 此处生成的 candidate_code 前缀不同，因此始终不同）。
+    if candidate_code is not None and candidate_code != item.item_code:
+        assert item.item_code != candidate_code
+
+    # 生成的编号应为历史最大序号 +1。
+    expected_seq = existing_count + 1
+    assert item.item_code == f"{doc_number}-{expected_seq:03d}"
+
+    # 持久化后从数据库读取，确认存储的也是自动生成值。
+    result = await db_session.execute(
+        select(URSItem).where(URSItem.id == item.id)
+    )
+    persisted = result.scalar_one()
+    assert persisted.item_code == item.item_code
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: DocumentService._generate_item_code (urs-auto-numbering, Task 2.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_item_code_empty_document_starts_at_001(
+    db_session: AsyncSession,
+):
+    """
+    Feature: urs-auto-numbering, Task 2.4
+
+    空文档首次生成编号 SHALL 返回 `{doc_number}-001`。
+
+    Validates: Requirements 1.1, 1.2
+    """
+    suffix = uuid.uuid4().hex[:12]
+    admin = await _create_admin_user(db_session, username=f"gencode-empty-{suffix}")
+    doc_number = f"URS-GEN1-{suffix}"
+    document = await _create_draft_urs_document(
+        db_session, author_id=admin.id, doc_number=doc_number
+    )
+
+    service = DocumentService(db_session)
+    item_code = await service._generate_item_code(document.id, doc_number)
+
+    assert item_code == f"{doc_number}-001"
+
+
+@pytest.mark.asyncio
+async def test_generate_item_code_increments_from_existing_max(
+    db_session: AsyncSession,
+):
+    """
+    Feature: urs-auto-numbering, Task 2.4
+
+    当文档下已有条目时，SHALL 基于历史最大序号加 1 生成下一个编号。
+
+    Validates: Requirements 1.3, 2.1
+    """
+    suffix = uuid.uuid4().hex[:12]
+    admin = await _create_admin_user(db_session, username=f"gencode-inc-{suffix}")
+    doc_number = f"URS-GEN2-{suffix}"
+    document = await _create_draft_urs_document(
+        db_session, author_id=admin.id, doc_number=doc_number
+    )
+
+    # 预置序号 001、002 两条条目
+    for seq in (1, 2):
+        db_session.add(
+            URSItem(
+                document_id=document.id,
+                item_code=f"{doc_number}-{seq:03d}",
+                description=f"既有条目 {seq}",
+                created_by=admin.id,
+            )
+        )
+    await db_session.commit()
+
+    service = DocumentService(db_session)
+    item_code = await service._generate_item_code(document.id, doc_number)
+
+    assert item_code == f"{doc_number}-003"
+
+
+@pytest.mark.asyncio
+async def test_generate_item_code_does_not_recycle_after_deletion(
+    db_session: AsyncSession,
+):
+    """
+    Feature: urs-auto-numbering, Task 2.4
+
+    删除条目后不回收编号：基于当前 MAX(item_code 序号) 而非现存条目数量生成下一个编号。
+    创建 001、002、003 后删除其中一条（非最大），新编号 SHALL 为 004 而非基于数量的 003。
+
+    Validates: Requirements 2.1, 2.2
+    """
+    suffix = uuid.uuid4().hex[:12]
+    admin = await _create_admin_user(db_session, username=f"gencode-del-{suffix}")
+    doc_number = f"URS-GEN3-{suffix}"
+    document = await _create_draft_urs_document(
+        db_session, author_id=admin.id, doc_number=doc_number
+    )
+
+    service = DocumentService(db_session)
+
+    # 依次自动创建三条条目：001、002、003
+    created = []
+    for _ in range(3):
+        created.append(
+            await service.create_urs_item(
+                document.id, URSItemCreate(description="条目"), admin
+            )
+        )
+    assert [c.item_code for c in created] == [
+        f"{doc_number}-001",
+        f"{doc_number}-002",
+        f"{doc_number}-003",
+    ]
+
+    # 删除一条非最大编号的条目（001），剩余 002、003
+    await service.delete_urs_item(document.id, created[0].id, admin)
+
+    # 下一个编号基于 MAX(003) + 1 = 004；若按现存数量(2)则会错误地得到 003
+    next_code = await service._generate_item_code(document.id, doc_number)
+    assert next_code == f"{doc_number}-004"
+
+
+# ---------------------------------------------------------------------------
+# Property-based tests: URS Item Auto-Numbering (urs-auto-numbering)
+# ---------------------------------------------------------------------------
+
+import re
+
+# doc_number 使用字母、数字与连字符组成，覆盖真实编号形态（如 URS-20250101-001）
+_DOC_NUMBER_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+
+
+@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    doc_number_base=st.text(alphabet=_DOC_NUMBER_ALPHABET, min_size=1, max_size=30),
+    existing_count=st.integers(min_value=0, max_value=5),
+)
+@pytest.mark.asyncio
+async def test_property_item_code_format_correctness(
+    db_session: AsyncSession,
+    doc_number_base: str,
+    existing_count: int,
+):
+    """
+    Feature: urs-auto-numbering, Property 2: 编号格式正确性（Format Correctness）
+
+    For any 自动生成的 item_code，它的格式必须为 `{doc_number}-{NNN}`，其中
+    `{doc_number}` 为所属文档的 doc_number，`{NNN}` 为三位零填充正整数。
+
+    Validates: Requirements 1.4
+    """
+    suffix = uuid.uuid4().hex[:12]
+    # 保证 doc_number 全局唯一，避免测试样例间冲突
+    doc_number = f"{doc_number_base}-{suffix}"
+
+    admin = await _create_admin_user(db_session, username=f"prop-fmt-admin-{suffix}")
+    document = await _create_draft_urs_document(
+        db_session, author_id=admin.id, doc_number=doc_number
+    )
+
+    # 预置若干已存在条目（使用合法的自动编号格式），验证递增后格式依旧正确
+    for i in range(existing_count):
+        db_session.add(
+            URSItem(
+                document_id=document.id,
+                item_code=f"{doc_number}-{i + 1:03d}",
+                description="既有条目描述",
+                created_by=admin.id,
+            )
+        )
+    await db_session.commit()
+
+    service = DocumentService(db_session)
+    item = await service.create_urs_item(
+        document.id,
+        URSItemCreate(description="自动编号条目"),
+        admin,
+    )
+
+    pattern = rf"^{re.escape(doc_number)}-\d{{3}}$"
+    assert re.match(pattern, item.item_code), (
+        f"item_code={item.item_code!r} 不匹配格式 {pattern!r}"
+    )
+
+# ---------------------------------------------------------------------------
+# Property-based tests: URS 条目自动编号 (urs-auto-numbering)
+# Property 4: 更新操作编号不可变（Item Code Immutability on Update）
+# ---------------------------------------------------------------------------
+
+
+@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    # 已有条目数量，用于覆盖不同的自动生成序号
+    existing_count=st.integers(min_value=0, max_value=3),
+    # 更新请求提交的 description：涵盖 None、空串、纯空白、正常文本
+    update_description=st.one_of(
+        st.none(),
+        st.just(""),
+        st.text(alphabet=" \t\n", min_size=1, max_size=5),
+        st.text(min_size=1, max_size=30),
+    ),
+)
+@pytest.mark.asyncio
+async def test_property_urs_item_code_immutable_on_update(
+    db_session: AsyncSession,
+    existing_count: int,
+    update_description: str | None,
+):
+    """
+    Feature: urs-auto-numbering, Property 4: 更新操作编号不可变（Item Code Immutability on Update）
+
+    For any URSItem 更新操作，无论提交何种数据，该条目的 item_code 在更新前后保持不变。
+
+    无论更新请求成功（description 有效或为 None）还是被拒绝（description 为空/纯空白），
+    该条目的 item_code 都必须与更新前完全一致。
+
+    Validates: Requirements 3.3
+    """
+    suffix = uuid.uuid4().hex[:12]
+    admin = await _create_admin_user(db_session, username=f"autonum-p4-admin-{suffix}")
+    doc_number = f"URS-AUTONUM-P4-{suffix}"
+    document = await _create_draft_urs_document(
+        db_session, author_id=admin.id, doc_number=doc_number
+    )
+
+    service = DocumentService(db_session)
+
+    # 预置若干已有条目，使目标条目获得非 001 的序号，覆盖更多编号形态。
+    for _ in range(existing_count):
+        await service.create_urs_item(
+            document.id,
+            URSItemCreate(description="既有条目描述"),
+            admin,
+        )
+
+    # 创建待更新的目标条目，记录其自动生成的 item_code。
+    target = await service.create_urs_item(
+        document.id,
+        URSItemCreate(description="原始描述"),
+        admin,
+    )
+    original_item_code = target.item_code
+    target_id = target.id
+
+    # 判断更新是否应当成功：description 为 None（不修改）或非空白文本时成功；
+    # 为空串或纯空白时应被拒绝（BusinessError），但无论如何 item_code 不变。
+    is_rejected = update_description is not None and update_description.strip() == ""
+
+    if is_rejected:
+        with pytest.raises(BusinessError):
+            await service.update_urs_item(
+                document.id,
+                target_id,
+                URSItemUpdate(description=update_description),
+                admin,
+            )
+    else:
+        updated = await service.update_urs_item(
+            document.id,
+            target_id,
+            URSItemUpdate(description=update_description),
+            admin,
+        )
+        # 更新成功后返回对象的 item_code 不变。
+        assert updated.item_code == original_item_code
+
+    # 无论成功或被拒绝，重新从数据库读取，item_code 必须与更新前一致。
+    result = await db_session.execute(
+        select(URSItem).where(URSItem.id == target_id)
+    )
+    persisted = result.scalar_one()
+    assert persisted.item_code == original_item_code
+
+
+# ---------------------------------------------------------------------------
+# Property-based tests: URS 条目自动编号 - 序号单调递增
+# (Feature: urs-auto-numbering, Task 2.5, Property 1)
+# ---------------------------------------------------------------------------
+
+
+def _extract_sequence_number(item_code: str, doc_number: str) -> int:
+    """从 item_code 中提取序号部分（去除 '{doc_number}-' 前缀）."""
+    prefix = f"{doc_number}-"
+    assert item_code.startswith(prefix), (
+        f"item_code {item_code!r} 未以预期前缀 {prefix!r} 开头"
+    )
+    return int(item_code[len(prefix):])
+
+
+@settings(
+    max_examples=50,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+@given(
+    operations=st.lists(
+        st.sampled_from(["create", "delete"]), min_size=1, max_size=15
+    ),
+)
+@pytest.mark.asyncio
+async def test_property_urs_item_sequence_monotonic_increasing(
+    db_session: AsyncSession,
+    operations: list[str],
+):
+    """
+    Feature: urs-auto-numbering, Property 1: 序号单调递增（Monotonic Sequence）
+
+    For any 文档下的任意条目创建/删除操作序列，每次新创建的 URS_Item 的
+    Sequence_Number 都严格大于该文档下历史上所有已生成的 Sequence_Number
+    （包括已删除条目的编号）。
+
+    **Validates: Requirements 1.1, 1.2, 1.3, 2.1, 2.2**
+    """
+    suffix = uuid.uuid4().hex[:12]
+    admin = await _create_admin_user(
+        db_session, username=f"autonum-p1-admin-{suffix}"
+    )
+    doc_number = f"URS-AUTONUM-{suffix}"
+    document = await _create_draft_urs_document(
+        db_session, author_id=admin.id, doc_number=doc_number
+    )
+
+    service = DocumentService(db_session)
+
+    # 历史上生成过的最大序号（包含已删除条目的编号，永不回退）。
+    historical_max = 0
+    # 当前仍然存活的条目 id，按创建先后顺序排列。
+    live_item_ids: list[str] = []
+
+    for op in operations:
+        if op == "create":
+            item = await service.create_urs_item(
+                document.id,
+                URSItemCreate(description="条目描述"),
+                admin,
+            )
+            seq = _extract_sequence_number(item.item_code, doc_number)
+            # 核心属性：新序号必须严格大于历史上所有已生成的序号。
+            assert seq > historical_max, (
+                f"新生成序号 {seq} 未严格大于历史最大值 {historical_max} "
+                f"(item_code={item.item_code})"
+            )
+            historical_max = seq
+            live_item_ids.append(item.id)
+        else:  # delete
+            # 删除最早创建的存活条目；无存活条目时删除操作为空操作。
+            if live_item_ids:
+                target_id = live_item_ids.pop(0)
+                await service.delete_urs_item(document.id, target_id, admin)

@@ -92,128 +92,91 @@ async def _setup_two_projects(
 
 
 @pytest.mark.asyncio
-async def test_create_trace_link(client: AsyncClient):
-    """测试创建追溯关系."""
-    token, urs_id, fs_id = await _setup(client)
+async def test_trace_matrix(db_session: AsyncSession):
+    """测试获取以 URS 条目覆盖关系为核心的追溯矩阵."""
+    suffix = uuid.uuid4().hex[:12]
+    admin = await _create_admin_user_p13(db_session, username=f"tm-admin-{suffix}")
+    project_id = f"tm-project-{suffix}"
 
-    resp = await client.post(
-        "/api/v1/traceability/links",
-        json={
-            "source_document_id": urs_id,
-            "target_document_id": fs_id,
-            "link_type": "traces_to",
-            "description": "URS需求追溯到FS",
-        },
-        headers={"Authorization": f"Bearer {token}"},
+    # URS 文档 + 两个条目（其一被引用，其一未被引用）
+    urs_document = Document(
+        title=f"URS-{suffix}",
+        doc_type=DocumentType.URS,
+        doc_number=f"URS-TM-{suffix}",
+        status=DocumentStatus.DRAFT,
+        project_id=project_id,
+        author_id=admin.id,
     )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["source_document_id"] == urs_id
-    assert data["target_document_id"] == fs_id
-    assert data["source_doc_type"] == "URS"
-    assert data["target_doc_type"] == "FS"
+    db_session.add(urs_document)
+    await db_session.flush()
 
-
-@pytest.mark.asyncio
-async def test_duplicate_link_fails(client: AsyncClient):
-    """测试重复创建追溯关系失败."""
-    token, urs_id, fs_id = await _setup(client)
-
-    await client.post(
-        "/api/v1/traceability/links",
-        json={"source_document_id": urs_id, "target_document_id": fs_id},
-        headers={"Authorization": f"Bearer {token}"},
+    covered_item = URSItem(
+        document_id=urs_document.id,
+        item_code=f"URS-TM-{suffix}-001",
+        description="被覆盖的条目",
+        created_by=admin.id,
     )
-    resp = await client.post(
-        "/api/v1/traceability/links",
-        json={"source_document_id": urs_id, "target_document_id": fs_id},
-        headers={"Authorization": f"Bearer {token}"},
+    uncovered_item = URSItem(
+        document_id=urs_document.id,
+        item_code=f"URS-TM-{suffix}-002",
+        description="未覆盖的条目",
+        created_by=admin.id,
     )
-    assert resp.status_code == 400
+    db_session.add_all([covered_item, uncovered_item])
+    await db_session.flush()
 
-
-@pytest.mark.asyncio
-async def test_self_link_fails(client: AsyncClient):
-    """测试自身追溯关系失败."""
-    token, urs_id, _ = await _setup(client)
-
-    resp = await client.post(
-        "/api/v1/traceability/links",
-        json={"source_document_id": urs_id, "target_document_id": urs_id},
-        headers={"Authorization": f"Bearer {token}"},
+    # FS 文档引用（覆盖）covered_item
+    fs_document = Document(
+        title=f"FS-{suffix}",
+        doc_type=DocumentType.FS,
+        doc_number=f"FS-TM-{suffix}",
+        status=DocumentStatus.DRAFT,
+        project_id=project_id,
+        author_id=admin.id,
     )
-    assert resp.status_code == 400
+    db_session.add(fs_document)
+    await db_session.flush()
 
-
-@pytest.mark.asyncio
-async def test_get_document_traces(client: AsyncClient):
-    """测试获取文档追溯关系."""
-    token, urs_id, fs_id = await _setup(client)
-
-    await client.post(
-        "/api/v1/traceability/links",
-        json={"source_document_id": urs_id, "target_document_id": fs_id},
-        headers={"Authorization": f"Bearer {token}"},
+    db_session.add(
+        URSReference(
+            document_id=fs_document.id,
+            urs_item_id=covered_item.id,
+            created_by=admin.id,
+        )
     )
+    await db_session.commit()
 
-    resp = await client.get(
-        f"/api/v1/traceability/document/{urs_id}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data["downstream"]) == 1
-    assert len(data["upstream"]) == 0
+    service = TraceabilityService(db_session)
+    result = await service.get_matrix(project_id=project_id)
 
-    # FS的上游
-    resp2 = await client.get(
-        f"/api/v1/traceability/document/{fs_id}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert len(resp2.json()["upstream"]) == 1
+    # 矩阵以 URS 条目为核心，不再包含文档级 coverage/gaps/links
+    assert "urs_matrix" in result
+    assert "coverage" not in result
+    assert "gaps" not in result
+    assert "links" not in result
 
+    matrix_by_item = {row["urs_item_id"]: row for row in result["urs_matrix"]}
+    assert set(matrix_by_item) == {covered_item.id, uncovered_item.id}
 
-@pytest.mark.asyncio
-async def test_delete_trace_link(client: AsyncClient):
-    """测试删除追溯关系."""
-    token, urs_id, fs_id = await _setup(client)
+    # 被覆盖条目：covered=True，引用文档中包含该 FS 文档
+    covered_row = matrix_by_item[covered_item.id]
+    assert covered_row["covered"] is True
+    ref_doc_numbers = {ref["doc_number"] for ref in covered_row["references"]}
+    assert fs_document.doc_number in ref_doc_numbers
+    assert covered_row["references"][0]["doc_type"] == "FS"
 
-    create_resp = await client.post(
-        "/api/v1/traceability/links",
-        json={"source_document_id": urs_id, "target_document_id": fs_id},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    link_id = create_resp.json()["id"]
+    # 未覆盖条目：covered=False，无引用
+    uncovered_row = matrix_by_item[uncovered_item.id]
+    assert uncovered_row["covered"] is False
+    assert uncovered_row["references"] == []
 
-    resp = await client.delete(
-        f"/api/v1/traceability/links/{link_id}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 200
+    # 未覆盖条目列表
+    uncovered_ids = {u["id"] for u in result["uncovered_urs_items"]}
+    assert uncovered_ids == {uncovered_item.id}
 
-
-@pytest.mark.asyncio
-async def test_trace_matrix(client: AsyncClient):
-    """测试获取追溯矩阵."""
-    token, urs_id, fs_id = await _setup(client)
-
-    await client.post(
-        "/api/v1/traceability/links",
-        json={"source_document_id": urs_id, "target_document_id": fs_id},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
-    resp = await client.get(
-        "/api/v1/traceability/matrix",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "coverage" in data
-    assert "gaps" in data
-    assert "links" in data
-    # URS has a link so coverage should show it
-    assert data["coverage"]["URS"]["covered"] == 1
+    # 未覆盖条目仅携带精简字段 (Requirement 5.4)
+    for u in result["uncovered_urs_items"]:
+        assert set(u.keys()) == {"id", "item_code", "description"}
 
 
 # ---------- 仪表板测试 ----------
@@ -278,63 +241,84 @@ async def test_dashboard_scoped_to_project(
 
 
 @pytest.mark.asyncio
-async def test_trace_matrix_scoped_to_project(
-    client: AsyncClient, db_session: AsyncSession
-):
-    """测试追溯矩阵按项目范围隔离，不同项目的文档与追溯关系互不影响."""
-    token, _, _ = await _setup(client)
-    project_a_id, project_b_id = await _setup_two_projects(client, db_session, token)
+async def test_trace_matrix_scoped_to_project(db_session: AsyncSession):
+    """测试追溯矩阵按项目范围隔离，不同项目的 URS 条目覆盖关系互不影响."""
+    suffix = uuid.uuid4().hex[:12]
+    admin = await _create_admin_user_p13(db_session, username=f"tms-admin-{suffix}")
+    project_a_id = f"tms-project-a-{suffix}"
+    project_b_id = f"tms-project-b-{suffix}"
 
-    # 项目A: URS -> FS 一条追溯关系
-    a_urs = await client.post(
-        "/api/v1/documents",
-        json={"title": "A-URS", "doc_type": "URS", "project_id": project_a_id},
-        headers={"Authorization": f"Bearer {token}"},
+    # 项目A: URS 条目被 FS 文档引用（已覆盖）
+    a_urs = Document(
+        title=f"A-URS-{suffix}",
+        doc_type=DocumentType.URS,
+        doc_number=f"URS-TMS-A-{suffix}",
+        status=DocumentStatus.DRAFT,
+        project_id=project_a_id,
+        author_id=admin.id,
     )
-    a_fs = await client.post(
-        "/api/v1/documents",
-        json={"title": "A-FS", "doc_type": "FS", "project_id": project_a_id},
-        headers={"Authorization": f"Bearer {token}"},
+    db_session.add(a_urs)
+    await db_session.flush()
+
+    a_item = URSItem(
+        document_id=a_urs.id,
+        item_code=f"URS-TMS-A-{suffix}-001",
+        description="项目A条目",
+        created_by=admin.id,
     )
-    await client.post(
-        "/api/v1/traceability/links",
-        json={
-            "source_document_id": a_urs.json()["id"],
-            "target_document_id": a_fs.json()["id"],
-        },
-        headers={"Authorization": f"Bearer {token}"},
+    db_session.add(a_item)
+    await db_session.flush()
+
+    a_fs = Document(
+        title=f"A-FS-{suffix}",
+        doc_type=DocumentType.FS,
+        doc_number=f"FS-TMS-A-{suffix}",
+        status=DocumentStatus.DRAFT,
+        project_id=project_a_id,
+        author_id=admin.id,
+    )
+    db_session.add(a_fs)
+    await db_session.flush()
+    db_session.add(
+        URSReference(
+            document_id=a_fs.id, urs_item_id=a_item.id, created_by=admin.id
+        )
     )
 
-    # 项目B: 一个未被追溯的 URS 文档
-    await client.post(
-        "/api/v1/documents",
-        json={"title": "B-URS", "doc_type": "URS", "project_id": project_b_id},
-        headers={"Authorization": f"Bearer {token}"},
+    # 项目B: 一个未被引用的 URS 条目
+    b_urs = Document(
+        title=f"B-URS-{suffix}",
+        doc_type=DocumentType.URS,
+        doc_number=f"URS-TMS-B-{suffix}",
+        status=DocumentStatus.DRAFT,
+        project_id=project_b_id,
+        author_id=admin.id,
     )
+    db_session.add(b_urs)
+    await db_session.flush()
 
-    resp_a = await client.get(
-        f"/api/v1/traceability/matrix?project_id={project_a_id}",
-        headers={"Authorization": f"Bearer {token}"},
+    b_item = URSItem(
+        document_id=b_urs.id,
+        item_code=f"URS-TMS-B-{suffix}-001",
+        description="项目B条目",
+        created_by=admin.id,
     )
-    assert resp_a.status_code == 200
-    data_a = resp_a.json()
-    assert len(data_a["links"]) == 1
-    assert data_a["coverage"]["URS"]["total"] == 1
-    assert data_a["coverage"]["URS"]["covered"] == 1
-    # URS 已被追溯到 FS，不应出现在 Gap 中；FS 尚无下游追溯，会出现在 Gap 中
-    gap_doc_numbers = {g["doc_number"] for g in data_a["gaps"]}
-    assert a_urs.json()["doc_number"] not in gap_doc_numbers
+    db_session.add(b_item)
+    await db_session.commit()
 
-    resp_b = await client.get(
-        f"/api/v1/traceability/matrix?project_id={project_b_id}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp_b.status_code == 200
-    data_b = resp_b.json()
-    assert data_b["links"] == []
-    assert data_b["coverage"]["URS"]["total"] == 1
-    assert data_b["coverage"]["URS"]["covered"] == 0
-    assert len(data_b["gaps"]) == 1
+    service = TraceabilityService(db_session)
+
+    # 项目A：仅含项目A的条目，且该条目已覆盖
+    result_a = await service.get_matrix(project_id=project_a_id)
+    a_item_ids = {row["urs_item_id"] for row in result_a["urs_matrix"]}
+    assert a_item_ids == {a_item.id}
+    assert result_a["uncovered_urs_items"] == []
+
+    # 项目B：仅含项目B的条目，且该条目未覆盖
+    result_b = await service.get_matrix(project_id=project_b_id)
+    b_item_ids = {row["urs_item_id"] for row in result_b["urs_matrix"]}
+    assert b_item_ids == {b_item.id}
+    assert {u["id"] for u in result_b["uncovered_urs_items"]} == {b_item.id}
 
 
 # ---------------------------------------------------------------------------
@@ -387,13 +371,13 @@ async def test_property_trace_matrix_isolates_urs_items_by_project(
     scenario: tuple,
 ):
     """
-    Feature: urs-traceability-matrix, Property 13: 追溯矩阵按项目范围隔离 URS 条目统计
+    Feature: urs-traceability-matrix, Property 13: 追溯矩阵按项目范围隔离未覆盖 URS 条目
 
     For any 分布在多个不同项目下的 URS_Document 及其 URS_Item、URS_Reference 数据集合，
-    指定某一 project_id 计算追溯矩阵时，其 urs_coverage 与 uncovered_urs_items SHALL
-    仅反映该 project_id 范围内的 URS_Item 数据，不包含其他项目的数据。
+    指定某一 project_id 计算追溯矩阵时，其 uncovered_urs_items SHALL 仅反映该 project_id
+    范围内未被引用的 URS_Item 数据，不包含其他项目的数据。
 
-    Validates: Requirements 5.5
+    Validates: Requirements 5.6
     """
     projects_covered_flags, target_index = scenario
     suffix = uuid.uuid4().hex[:12]
@@ -466,15 +450,6 @@ async def test_property_trace_matrix_isolates_urs_items_by_project(
     for project_index, item_ids in enumerate(project_item_ids):
         if project_index != target_index:
             other_item_ids.update(item_ids)
-
-    expected_total = len(target_covered_flags)
-    expected_covered = sum(1 for c in target_covered_flags if c)
-    expected_uncovered = expected_total - expected_covered
-
-    urs_coverage = result["urs_coverage"]
-    assert urs_coverage["total"] == expected_total
-    assert urs_coverage["covered"] == expected_covered
-    assert urs_coverage["uncovered"] == expected_uncovered
 
     uncovered_item_ids = {u["id"] for u in result["uncovered_urs_items"]}
     # 未覆盖条目集合必须恰好等于目标项目内未被引用的条目集合
@@ -611,10 +586,13 @@ async def test_property_urs_item_uncovered_status_determination(
     service = TraceabilityService(db_session)
     matrix = await service.get_matrix()
 
+    # uncovered_urs_items 不再携带 document_id，因此按本测试创建的条目 id 集合过滤，
+    # 以隔离其他测试可能写入的全局数据。
+    all_created_ids = covered_item_ids | uncovered_item_ids
     reported_uncovered_ids = {
         entry["id"]
         for entry in matrix["uncovered_urs_items"]
-        if entry["document_id"] == urs_document.id
+        if entry["id"] in all_created_ids
     }
 
     assert reported_uncovered_ids == uncovered_item_ids
@@ -797,14 +775,6 @@ async def test_end_to_end_urs_traceability_flow(
     assert matrix_resp.status_code == 200, matrix_resp.text
     matrix = matrix_resp.json()
 
-    # 验证 urs_coverage 字段存在且计算正确
-    assert "urs_coverage" in matrix
-    urs_cov = matrix["urs_coverage"]
-    assert urs_cov["total"] == 2  # 共 2 个 URS 条目
-    assert urs_cov["covered"] == 1  # 只有 item1 被 FS 文档引用
-    assert urs_cov["uncovered"] == 1  # item2 未被引用
-    assert urs_cov["rate"] == 50.0  # 50% 覆盖率
-
     # 验证未覆盖条目列表
     assert "uncovered_urs_items" in matrix
     uncovered = matrix["uncovered_urs_items"]
@@ -812,100 +782,5 @@ async def test_end_to_end_urs_traceability_flow(
     assert uncovered[0]["id"] == item2_id
     assert uncovered[0]["item_code"] == item2_code
     assert uncovered[0]["description"] == "数据导出功能"
-
-
-@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@given(
-    has_reference_flags=st.lists(st.booleans(), min_size=0, max_size=10),
-)
-@pytest.mark.asyncio
-async def test_property_urs_coverage_statistics_correctness(
-    db_session: AsyncSession,
-    has_reference_flags: list[bool],
-):
-    """
-    Feature: urs-traceability-matrix, Property 14: URS 条目覆盖率统计的正确性
-
-    For any 一组 URS_Item 及其覆盖状态（包括空集合），urs_coverage.total SHALL 等于
-    条目总数，urs_coverage.covered SHALL 等于被覆盖的条目数，urs_coverage.uncovered
-    SHALL 等于总数减去已覆盖数，urs_coverage.rate SHALL 等于 covered / total * 100
-    并保留一位小数；当 total 为零时，rate SHALL 为零且计算过程不引发除零错误。
-
-    Validates: Requirements 5.4, 6.1, 6.2
-    """
-    suffix = uuid.uuid4().hex[:12]
-    admin = await _create_admin_user_for_trace(db_session, username=f"prop14-admin-{suffix}")
-
-    # 每个 hypothesis 样例使用独立的项目范围隔离，避免同一测试函数的多次迭代之间
-    # （表不会在迭代间重置）互相污染 urs_coverage 的统计结果。
-    project = Project(
-        name=f"prop14-project-{suffix}",
-        code=f"PROP14-{suffix}",
-        system_name="prop14-system",
-        created_by=admin.id,
-    )
-    db_session.add(project)
-    await db_session.flush()
-
-    urs_document = Document(
-        title=f"URS-{suffix}",
-        doc_type=DocumentType.URS,
-        doc_number=f"URS-PROP14-{suffix}",
-        status=DocumentStatus.DRAFT,
-        project_id=project.id,
-        author_id=admin.id,
-    )
-    db_session.add(urs_document)
-    await db_session.flush()
-
-    covered_count = 0
-
-    for i, has_reference in enumerate(has_reference_flags):
-        item = URSItem(
-            document_id=urs_document.id,
-            item_code=f"ITEM-{suffix}-{i}",
-            description=f"条目描述-{i}",
-            created_by=admin.id,
-        )
-        db_session.add(item)
-        await db_session.flush()
-
-        if has_reference:
-            ref_doc_type = _REFERENCING_DOC_TYPES_TRACE[i % len(_REFERENCING_DOC_TYPES_TRACE)]
-            referencing_document = Document(
-                title=f"{ref_doc_type.value}-{suffix}-{i}",
-                doc_type=ref_doc_type,
-                doc_number=f"{ref_doc_type.value}-PROP14-{suffix}-{i}",
-                status=DocumentStatus.DRAFT,
-                project_id=project.id,
-                author_id=admin.id,
-            )
-            db_session.add(referencing_document)
-            await db_session.flush()
-
-            db_session.add(
-                URSReference(
-                    document_id=referencing_document.id,
-                    urs_item_id=item.id,
-                    created_by=admin.id,
-                )
-            )
-            covered_count += 1
-
-    await db_session.commit()
-
-    service = TraceabilityService(db_session)
-    matrix = await service.get_matrix(project_id=project.id)
-    urs_coverage = matrix["urs_coverage"]
-
-    total = len(has_reference_flags)
-    expected_uncovered = total - covered_count
-    expected_rate = round(covered_count / total * 100, 1) if total > 0 else 0
-
-    assert urs_coverage["total"] == total
-    assert urs_coverage["covered"] == covered_count
-    assert urs_coverage["uncovered"] == expected_uncovered
-    assert urs_coverage["rate"] == expected_rate
-
-    if total == 0:
-        assert urs_coverage["rate"] == 0
+    # 未覆盖条目仅携带精简字段，不包含 doc_number (Requirement 5.4)
+    assert "doc_number" not in uncovered[0]
