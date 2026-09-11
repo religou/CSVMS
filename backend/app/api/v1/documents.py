@@ -1,6 +1,6 @@
 """文档管理 API 路由."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -11,6 +11,7 @@ from app.models.urs import URSItem, URSReference
 from app.schemas.document import (
     DocumentCreate,
     DocumentDetailResponse,
+    DocumentReviseRequest,
     DocumentResponse,
     DocumentUpdate,
     DocumentVersionResponse,
@@ -144,6 +145,23 @@ async def update_document(
                 new_value=new_val,
             )
 
+    return _doc_response(doc)
+
+
+@router.post("/{document_id}/revise", response_model=DocumentResponse)
+async def revise_document(
+    document_id: str,
+    data: DocumentReviseRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """对已批准文档发起变更：冻结旧版本快照并退回草稿，需填写变更原因."""
+    ip_address = request.client.host if request.client else None
+    service = DocumentService(db)
+    doc = await service.revise_document(
+        document_id, current_user.id, data.change_reason, ip_address=ip_address
+    )
     return _doc_response(doc)
 
 

@@ -1,5 +1,7 @@
 """追溯矩阵 Pydantic schemas."""
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -49,3 +51,23 @@ class DashboardResponse(BaseModel):
     pending_approvals: int
     my_drafts: int
     total_signatures: int
+
+
+class HomeDraftItem(BaseModel):
+    """首页「我的草稿」条目."""
+
+    id: str
+    title: str
+    doc_type: str
+    doc_number: str
+    version: str
+    project_id: str | None = None
+    updated_at: datetime
+
+
+class HomeSummaryResponse(BaseModel):
+    """首页用户维度汇总响应."""
+
+    project_count: int
+    my_draft_count: int
+    my_drafts: list[HomeDraftItem]

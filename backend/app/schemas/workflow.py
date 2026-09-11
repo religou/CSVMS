@@ -82,6 +82,13 @@ class WorkflowActionRequest(BaseModel):
     comment: str | None = None
 
 
+class WorkflowApprovalRequest(BaseModel):
+    """审批决策请求 - 通过/拒绝需重新输入密码进行电子签名."""
+
+    comment: str | None = None
+    password: str = Field(..., description="当前用户密码（电子签名重认证）")
+
+
 class WorkflowStepResponse(BaseModel):
     """工作流步骤响应."""
 
@@ -106,6 +113,8 @@ class WorkflowResponse(BaseModel):
     id: str
     template_id: str
     document_id: str
+    document_title: str | None = None
+    project_id: str | None = None
     status: WorkflowStatus
     current_step_order: int
     initiated_by: str

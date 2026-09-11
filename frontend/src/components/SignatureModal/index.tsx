@@ -1,56 +1,39 @@
 import { useState } from 'react'
-import { Modal, Form, Input, Select, message } from 'antd'
+import { Modal, Form, Input } from 'antd'
 import { LockOutlined, UserOutlined } from '@ant-design/icons'
-import { signatureService } from '@/services/signatures'
-
-const MEANING_OPTIONS = [
-    { value: '我已起草此文档', label: '起草' },
-    { value: '我已审核此文档，内容准确完整', label: '审核' },
-    { value: '我已批准此文档，同意生效', label: '批准' },
-]
 
 interface SignatureModalProps {
     open: boolean
-    documentId: string
-    workflowId?: string
-    workflowStepId?: string
-    defaultMeaning?: string
-    onSuccess?: () => void
+    /** 当前登录用户名（只读展示，不可修改，防止冒签） */
+    username: string
+    /** 本次签名的法律含义（只读展示，由调用方按动作/步骤生成） */
+    meaning: string
+    confirmLoading?: boolean
+    /** 确认后回调，返回重新输入的密码由调用方去执行批准/拒绝 */
+    onConfirm: (password: string) => void
     onCancel?: () => void
 }
 
 export default function SignatureModal({
     open,
-    documentId,
-    workflowId,
-    workflowStepId,
-    defaultMeaning,
-    onSuccess,
+    username,
+    meaning,
+    confirmLoading,
+    onConfirm,
     onCancel,
 }: SignatureModalProps) {
     const [form] = Form.useForm()
-    const [loading, setLoading] = useState(false)
+    const [submitting, setSubmitting] = useState(false)
 
-    const handleSign = async () => {
+    const handleOk = async () => {
         try {
+            setSubmitting(true)
             const values = await form.validateFields()
-            setLoading(true)
-            await signatureService.sign({
-                username: values.username,
-                password: values.password,
-                document_id: documentId,
-                meaning: values.meaning,
-                workflow_id: workflowId,
-                workflow_step_id: workflowStepId,
-            })
-            message.success('电子签名成功')
-            form.resetFields()
-            onSuccess?.()
-        } catch (err: any) {
-            const detail = err?.response?.data?.detail
-            message.error(detail || '签名失败')
+            onConfirm(values.password)
+        } catch {
+            // 校验失败，保持弹窗打开
         } finally {
-            setLoading(false)
+            setSubmitting(false)
         }
     }
 
@@ -58,12 +41,12 @@ export default function SignatureModal({
         <Modal
             title="电子签名 (21 CFR Part 11)"
             open={open}
-            onOk={handleSign}
+            onOk={handleOk}
             onCancel={() => {
                 form.resetFields()
                 onCancel?.()
             }}
-            confirmLoading={loading}
+            confirmLoading={confirmLoading || submitting}
             okText="确认签名"
             cancelText="取消"
             destroyOnClose>
@@ -75,23 +58,19 @@ export default function SignatureModal({
                     borderRadius: 4,
                     fontSize: 12,
                 }}>
-                根据 21 CFR Part 11 要求，电子签名需重新验证您的身份。
+                根据 21 CFR Part 11 要求，此操作需重新输入密码进行电子签名。
                 签名将绑定到当前文档版本，不可篡改。
             </div>
-            <Form
-                form={form}
-                layout="vertical"
-                initialValues={{
-                    meaning: defaultMeaning || MEANING_OPTIONS[1]!.value,
-                }}>
-                <Form.Item
-                    name="username"
-                    label="用户名"
-                    rules={[{ required: true, message: '请输入用户名' }]}>
+            <Form form={form} layout="vertical">
+                <Form.Item label="签名人">
                     <Input
                         prefix={<UserOutlined />}
-                        placeholder="请重新输入用户名"
+                        value={username}
+                        disabled
                     />
+                </Form.Item>
+                <Form.Item label="签名含义">
+                    <Input value={meaning} disabled />
                 </Form.Item>
                 <Form.Item
                     name="password"
@@ -99,14 +78,9 @@ export default function SignatureModal({
                     rules={[{ required: true, message: '请输入密码' }]}>
                     <Input.Password
                         prefix={<LockOutlined />}
-                        placeholder="请重新输入密码"
+                        placeholder="请重新输入登录密码"
+                        autoFocus
                     />
-                </Form.Item>
-                <Form.Item
-                    name="meaning"
-                    label="签名含义"
-                    rules={[{ required: true, message: '请选择签名含义' }]}>
-                    <Select options={MEANING_OPTIONS} />
                 </Form.Item>
             </Form>
         </Modal>

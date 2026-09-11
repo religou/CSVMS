@@ -26,7 +26,7 @@ export default function ProjectLayout() {
             projectService
                 .get(projectId)
                 .then(setCurrentProject)
-                .catch(() => navigate('/'))
+                .catch(() => navigate('/projects'))
         }
     }, [projectId, currentProject, setCurrentProject, navigate])
 
@@ -92,7 +92,7 @@ export default function ProjectLayout() {
                         type="text"
                         size="small"
                         icon={<ArrowLeftOutlined />}
-                        onClick={() => navigate('/')}
+                        onClick={() => navigate('/projects')}
                         style={{ marginBottom: 8 }}>
                         返回项目列表
                     </Button>

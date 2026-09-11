@@ -104,6 +104,11 @@ export const documentService = {
     update: (id: string, data: DocumentUpdateRequest) =>
         apiClient.put<DocumentItem>(`/documents/${id}`, data),
 
+    revise: (id: string, changeReason: string) =>
+        apiClient.post<DocumentItem>(`/documents/${id}/revise`, {
+            change_reason: changeReason,
+        }),
+
     delete: (id: string) => apiClient.delete(`/documents/${id}`),
 
     getVersions: (id: string) =>
@@ -119,8 +124,9 @@ export const createUrsItem = (documentId: string, data: UrsItemCreateRequest) =>
 export const updateUrsItem = (
     documentId: string,
     itemId: string,
-    data: UrsItemUpdateRequest
-) => apiClient.put<UrsItem>(`/documents/${documentId}/urs-items/${itemId}`, data)
+    data: UrsItemUpdateRequest,
+) =>
+    apiClient.put<UrsItem>(`/documents/${documentId}/urs-items/${itemId}`, data)
 
 export const deleteUrsItem = (documentId: string, itemId: string) =>
     apiClient.delete(`/documents/${documentId}/urs-items/${itemId}`)
@@ -130,8 +136,12 @@ export const listUrsReferences = (documentId: string) =>
 
 export const createUrsReference = (
     documentId: string,
-    data: UrsReferenceCreateRequest
-) => apiClient.post<UrsReference>(`/documents/${documentId}/urs-references`, data)
+    data: UrsReferenceCreateRequest,
+) =>
+    apiClient.post<UrsReference>(
+        `/documents/${documentId}/urs-references`,
+        data,
+    )
 
 export const deleteUrsReference = (documentId: string, referenceId: string) =>
     apiClient.delete(`/documents/${documentId}/urs-references/${referenceId}`)

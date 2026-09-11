@@ -36,6 +36,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
 import GithubSlugger from 'github-slugger'
 import RichTextEditor from '@/components/RichTextEditor'
+import SignatureModal from '@/components/SignatureModal'
 import {
     documentService,
     DocumentDetail,
@@ -53,6 +54,7 @@ import {
 import { workflowService, WorkflowItem } from '@/services/workflows'
 import { useDictItems } from '@/hooks/useDictItems'
 import { useProjectStore } from '@/stores/projectStore'
+import { useAuthStore } from '@/stores/authStore'
 import { formatUrsItemRows, formatUrsReferenceRows } from '@/utils/ursDisplay'
 
 const REFERENCING_DOC_TYPES = ['FS', 'DS', 'IQ', 'OQ', 'PQ']
@@ -83,12 +85,20 @@ export default function DocumentDetailPage() {
     const navigate = useNavigate()
     const { items: statusDictItems } = useDictItems('doc_status')
     const currentProject = useProjectStore((state) => state.currentProject)
+    const currentUser = useAuthStore((state) => state.user)
     const [doc, setDoc] = useState<DocumentDetail | null>(null)
     const [workflow, setWorkflow] = useState<WorkflowItem | null>(null)
     const [loading, setLoading] = useState(true)
     const [editing, setEditing] = useState(false)
     const [saving, setSaving] = useState(false)
     const [form] = Form.useForm()
+
+    // 电子签名（通过/拒绝需重新输入密码）
+    const [signAction, setSignAction] = useState<'approve' | 'reject' | null>(
+        null,
+    )
+    const [rejectReason, setRejectReason] = useState('')
+    const [signLoading, setSignLoading] = useState(false)
 
     // URS 条目（doc_type === 'URS'）
     const [ursItems, setUrsItems] = useState<UrsItem[]>([])
@@ -105,9 +115,7 @@ export default function DocumentDetailPage() {
     const [selectedUrsDocId, setSelectedUrsDocId] = useState<string | null>(
         null,
     )
-    const [selectableUrsItems, setSelectableUrsItems] = useState<UrsItem[]>(
-        [],
-    )
+    const [selectableUrsItems, setSelectableUrsItems] = useState<UrsItem[]>([])
     const [ursRefForm] = Form.useForm()
 
     const fetchData = async () => {
@@ -192,15 +200,51 @@ export default function DocumentDetailPage() {
         })
     }
 
-    const handleApprove = async () => {
+    const handleRevise = () => {
+        if (!id) return
+        Modal.confirm({
+            title: '发起变更',
+            content: (
+                <div>
+                    <p style={{ marginBottom: 8 }}>
+                        发起变更后，当前已批准版本将被冻结为历史快照，文档退回草稿以便再次编辑，
+                        需重新提交审批。请填写变更原因：
+                    </p>
+                    <Input.TextArea
+                        id="revise-reason"
+                        placeholder="请输入变更原因"
+                        rows={3}
+                    />
+                </div>
+            ),
+            okText: '确认发起变更',
+            cancelText: '取消',
+            onOk: async () => {
+                const reason =
+                    (
+                        document.getElementById(
+                            'revise-reason',
+                        ) as HTMLTextAreaElement
+                    )?.value?.trim() || ''
+                if (!reason) {
+                    message.error('请填写变更原因')
+                    return Promise.reject()
+                }
+                try {
+                    await documentService.revise(id, reason)
+                    message.success('已发起变更，文档已退回草稿')
+                    fetchData()
+                } catch (err: any) {
+                    message.error(err?.response?.data?.detail || '发起变更失败')
+                    return Promise.reject()
+                }
+            },
+        })
+    }
+
+    const handleApprove = () => {
         if (!workflow) return
-        try {
-            await workflowService.approve(workflow.id, '同意')
-            message.success('审批通过')
-            fetchData()
-        } catch (err: any) {
-            message.error(err?.response?.data?.detail || '操作失败')
-        }
+        setSignAction('approve')
     }
 
     const handleReject = () => {
@@ -214,18 +258,42 @@ export default function DocumentDetailPage() {
                     rows={3}
                 />
             ),
-            onOk: async () => {
+            onOk: () => {
                 const reason =
                     (
                         document.getElementById(
                             'reject-reason',
                         ) as HTMLTextAreaElement
                     )?.value || '不通过'
-                await workflowService.reject(workflow.id, reason)
-                message.success('已拒绝')
-                fetchData()
+                setRejectReason(reason)
+                setSignAction('reject')
             },
         })
+    }
+
+    const handleSignConfirm = async (password: string) => {
+        if (!workflow) return
+        setSignLoading(true)
+        try {
+            if (signAction === 'approve') {
+                await workflowService.approve(workflow.id, password, '同意')
+                message.success('审批通过')
+            } else {
+                await workflowService.reject(
+                    workflow.id,
+                    password,
+                    rejectReason,
+                )
+                message.success('已拒绝')
+            }
+            setSignAction(null)
+            setRejectReason('')
+            fetchData()
+        } catch (err: any) {
+            message.error(err?.response?.data?.detail || '操作失败')
+        } finally {
+            setSignLoading(false)
+        }
     }
 
     const handleWithdraw = async () => {
@@ -366,6 +434,7 @@ export default function DocumentDetailPage() {
 
     const isDraft = doc.status === 'draft'
     const isUnderReview = doc.status === 'under_review'
+    const isApproved = doc.status === 'approved'
     const canManageDocuments =
         currentProject?.current_user_permissions.includes(
             'project.documents.manage',
@@ -496,8 +565,7 @@ export default function DocumentDetailPage() {
                           ) : (
                               <Table
                                   rowKey={(_, index) =>
-                                      ursReferences[index!]?.id ??
-                                      String(index)
+                                      ursReferences[index!]?.id ?? String(index)
                                   }
                                   dataSource={ursReferenceRows}
                                   pagination={false}
@@ -561,6 +629,16 @@ export default function DocumentDetailPage() {
           ]
         : []
 
+    const currentStep = workflow?.steps.find(
+        (s) => s.step_order === workflow.current_step_order,
+    )
+    const signMeaning =
+        signAction === 'reject'
+            ? '我已审核此文档，予以退回'
+            : currentStep?.step_type === 'approve'
+              ? '我已批准此文档，同意生效'
+              : '我已审核此文档，内容准确完整'
+
     return (
         <div>
             <Space style={{ marginBottom: 16 }}>
@@ -588,6 +666,13 @@ export default function DocumentDetailPage() {
                                 icon={<EditOutlined />}
                                 onClick={() => setEditing(true)}>
                                 编辑
+                            </Button>
+                        )}
+                        {isApproved && canManageDocuments && (
+                            <Button
+                                icon={<EditOutlined />}
+                                onClick={handleRevise}>
+                                发起变更
                             </Button>
                         )}
                         {editing && canManageDocuments && (
@@ -681,8 +766,7 @@ export default function DocumentDetailPage() {
                                             label="摘要"
                                             span={2}>
                                             {doc.summary || (
-                                                <span
-                                                    style={{ color: '#999' }}>
+                                                <span style={{ color: '#999' }}>
                                                     暂无摘要
                                                 </span>
                                             )}
@@ -719,7 +803,10 @@ export default function DocumentDetailPage() {
                                                 </Card>
                                             </Col>
                                         )}
-                                        <Col span={headings.length > 0 ? 19 : 24}>
+                                        <Col
+                                            span={
+                                                headings.length > 0 ? 19 : 24
+                                            }>
                                             <Card
                                                 type="inner"
                                                 title="正文"
@@ -755,82 +842,88 @@ export default function DocumentDetailPage() {
                         {
                             key: 'workflow',
                             label: '审批流程',
-                            children: workflow ? (
-                                <Timeline
-                                    items={workflow.steps.map((step) => ({
-                                        color:
-                                            step.status === 'approved'
-                                                ? 'green'
-                                                : step.status === 'rejected'
-                                                  ? 'red'
-                                                  : step.status ===
-                                                      'in_progress'
-                                                    ? 'blue'
-                                                    : 'gray',
-                                        children: (
-                                            <div>
-                                                <strong>{step.name}</strong>
-                                                <span style={{ marginLeft: 8 }}>
-                                                    <Tag
-                                                        color={
-                                                            step.status ===
+                            children:
+                                workflow && (isUnderReview || isApproved) ? (
+                                    <Timeline
+                                        items={workflow.steps.map((step) => ({
+                                            color:
+                                                step.status === 'approved'
+                                                    ? 'green'
+                                                    : step.status === 'rejected'
+                                                      ? 'red'
+                                                      : step.status ===
+                                                          'in_progress'
+                                                        ? 'blue'
+                                                        : 'gray',
+                                            children: (
+                                                <div>
+                                                    <strong>{step.name}</strong>
+                                                    <span
+                                                        style={{
+                                                            marginLeft: 8,
+                                                        }}>
+                                                        <Tag
+                                                            color={
+                                                                step.status ===
+                                                                'approved'
+                                                                    ? 'green'
+                                                                    : step.status ===
+                                                                        'rejected'
+                                                                      ? 'red'
+                                                                      : step.status ===
+                                                                          'in_progress'
+                                                                        ? 'blue'
+                                                                        : 'default'
+                                                            }>
+                                                            {step.status ===
                                                             'approved'
-                                                                ? 'green'
+                                                                ? '已通过'
                                                                 : step.status ===
                                                                     'rejected'
-                                                                  ? 'red'
+                                                                  ? '已拒绝'
                                                                   : step.status ===
                                                                       'in_progress'
-                                                                    ? 'blue'
-                                                                    : 'default'
-                                                        }>
-                                                        {step.status ===
-                                                        'approved'
-                                                            ? '已通过'
-                                                            : step.status ===
-                                                                'rejected'
-                                                              ? '已拒绝'
-                                                              : step.status ===
-                                                                  'in_progress'
-                                                                ? '进行中'
-                                                                : '待处理'}
-                                                    </Tag>
-                                                </span>
-                                                {step.actor_name && (
-                                                    <div
-                                                        style={{
-                                                            fontSize: 12,
-                                                            color: '#666',
-                                                        }}>
-                                                        操作人:{' '}
-                                                        {step.actor_name} |{' '}
-                                                        {step.acted_at
-                                                            ? new Date(
-                                                                  step.acted_at,
-                                                              ).toLocaleString(
-                                                                  'zh-CN',
-                                                              )
-                                                            : ''}
-                                                    </div>
-                                                )}
-                                                {step.comment && (
-                                                    <div
-                                                        style={{
-                                                            fontSize: 12,
-                                                            color: '#888',
-                                                        }}>
-                                                        意见: {step.comment}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ),
-                                    }))}
-                                />
-                            ) : (
-                                <div style={{ color: '#999' }}>
-                                    尚未进入审批流程
-                                </div>
-                            ),
+                                                                    ? '进行中'
+                                                                    : '待处理'}
+                                                        </Tag>
+                                                    </span>
+                                                    {step.actor_name && (
+                                                        <div
+                                                            style={{
+                                                                fontSize: 12,
+                                                                color: '#666',
+                                                            }}>
+                                                            操作人:{' '}
+                                                            {step.actor_name} |{' '}
+                                                            {step.acted_at
+                                                                ? new Date(
+                                                                      step.acted_at,
+                                                                  ).toLocaleString(
+                                                                      'zh-CN',
+                                                                  )
+                                                                : ''}
+                                                        </div>
+                                                    )}
+                                                    {step.comment && (
+                                                        <div
+                                                            style={{
+                                                                fontSize: 12,
+                                                                color: '#888',
+                                                            }}>
+                                                            意见: {step.comment}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ),
+                                        }))}
+                                    />
+                                ) : (
+                                    <div style={{ color: '#999' }}>
+                                        {isDraft && workflow
+                                            ? '当前为草稿，待重新提交审批'
+                                            : '尚未进入审批流程'}
+                                    </div>
+                                ),
                         },
                         {
                             key: 'versions',
@@ -897,9 +990,7 @@ export default function DocumentDetailPage() {
                     <Form.Item
                         name="description"
                         label="条目描述"
-                        rules={[
-                            { required: true, message: '请输入条目描述' },
-                        ]}>
+                        rules={[{ required: true, message: '请输入条目描述' }]}>
                         <Input.TextArea rows={3} />
                     </Form.Item>
                 </Form>
@@ -941,6 +1032,18 @@ export default function DocumentDetailPage() {
                     </Form.Item>
                 </Form>
             </Modal>
+
+            <SignatureModal
+                open={signAction !== null}
+                username={currentUser?.username || ''}
+                meaning={signMeaning}
+                confirmLoading={signLoading}
+                onConfirm={handleSignConfirm}
+                onCancel={() => {
+                    setSignAction(null)
+                    setRejectReason('')
+                }}
+            />
         </div>
     )
 }

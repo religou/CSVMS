@@ -146,7 +146,7 @@ async def test_approve_workflow_steps(client: AsyncClient):
     # 批准第一步
     resp = await client.post(
         f"/api/v1/workflows/{workflow_id}/approve",
-        json={"comment": "审核通过"},
+        json={"comment": "审核通过", "password": "Test@1234"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
@@ -157,7 +157,7 @@ async def test_approve_workflow_steps(client: AsyncClient):
     # 批准第二步 → 流程完成
     resp = await client.post(
         f"/api/v1/workflows/{workflow_id}/approve",
-        json={"comment": "批准生效"},
+        json={"comment": "批准生效", "password": "Test@1234"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
@@ -179,7 +179,7 @@ async def test_reject_workflow(client: AsyncClient):
 
     resp = await client.post(
         f"/api/v1/workflows/{workflow_id}/reject",
-        json={"comment": "内容不完整"},
+        json={"comment": "内容不完整", "password": "Test@1234"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
@@ -228,6 +228,141 @@ async def test_get_workflow_actions(client: AsyncClient):
     actions = resp.json()
     assert len(actions) >= 1
     assert actions[0]["action"] == "submit"
+
+
+@pytest.mark.asyncio
+async def test_revise_approved_document(client: AsyncClient):
+    """测试已批准文档发起变更：冻结旧版本快照并退回草稿."""
+    token, doc_id = await _setup_user_and_doc(client)
+    await _create_template(client, token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 提交并逐步批准 → 文档 APPROVED，版本进位到 1.0
+    submit_resp = await client.post(
+        "/api/v1/workflows/submit",
+        json={"document_id": doc_id},
+        headers=headers,
+    )
+    workflow_id = submit_resp.json()["id"]
+    for _ in range(2):
+        await client.post(
+            f"/api/v1/workflows/{workflow_id}/approve",
+            json={"comment": "通过", "password": "Test@1234"},
+            headers=headers,
+        )
+
+    doc = (await client.get(f"/api/v1/documents/{doc_id}", headers=headers)).json()
+    assert doc["status"] == "approved"
+    assert doc["version"] == "1.0"
+
+    # 发起变更必须填写原因
+    empty = await client.post(
+        f"/api/v1/documents/{doc_id}/revise",
+        json={"change_reason": "  "},
+        headers=headers,
+    )
+    assert empty.status_code == 400
+
+    # 正常发起变更 → 退回草稿，次版本进位到 1.1
+    resp = await client.post(
+        f"/api/v1/documents/{doc_id}/revise",
+        json={"change_reason": "修订需求描述"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "draft"
+    assert resp.json()["version"] == "1.1"
+
+    # 被取代的两条电子签名（审核 + 批准）各记一条 SIGNATURE_VOID 审计
+    void_logs = await client.get(
+        f"/api/v1/audit-logs?resource_type=document&resource_id={doc_id}&action=SIGNATURE_VOID",
+        headers=headers,
+    )
+    assert void_logs.status_code == 200
+    void_items = void_logs.json()["items"]
+    assert len(void_items) == 2
+    assert all(item["field_changed"] == "signature" for item in void_items)
+
+    # 旧的已批准版本被冻结为历史快照（标签仍为 1.0）
+    detail = (await client.get(f"/api/v1/documents/{doc_id}", headers=headers)).json()
+    assert any(v["version_label"] == "1.0" for v in detail["versions"])
+
+    # 退回草稿后可再次编辑
+    edit = await client.put(
+        f"/api/v1/documents/{doc_id}",
+        json={"content": "修订后的内容"},
+        headers=headers,
+    )
+    assert edit.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_revise_non_approved_document_fails(client: AsyncClient):
+    """测试非已批准文档不能发起变更."""
+    token, doc_id = await _setup_user_and_doc(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = await client.post(
+        f"/api/v1/documents/{doc_id}/revise",
+        json={"change_reason": "尝试变更草稿"},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_events_written_to_audit_log(client: AsyncClient):
+    """测试提交/审核/批准/破坏变更都记录到文档审计轨迹，且审核与批准区分."""
+    token, doc_id = await _setup_user_and_doc(client)
+    await _create_template(client, token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def actions_for(action: str) -> list:
+        resp = await client.get(
+            f"/api/v1/audit-logs?resource_type=document&resource_id={doc_id}&action={action}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        return resp.json()["items"]
+
+    # 提交 → SUBMIT
+    submit_resp = await client.post(
+        "/api/v1/workflows/submit",
+        json={"document_id": doc_id},
+        headers=headers,
+    )
+    workflow_id = submit_resp.json()["id"]
+    assert len(await actions_for("SUBMIT")) >= 1
+
+    # 审核步通过 → REVIEW（区别于批准）
+    await client.post(
+        f"/api/v1/workflows/{workflow_id}/approve",
+        json={"comment": "审核通过", "password": "Test@1234"},
+        headers=headers,
+    )
+    assert len(await actions_for("REVIEW")) == 1
+    assert len(await actions_for("APPROVE")) == 0
+
+    # 批准步通过 → APPROVE
+    await client.post(
+        f"/api/v1/workflows/{workflow_id}/approve",
+        json={"comment": "批准生效", "password": "Test@1234"},
+        headers=headers,
+    )
+    assert len(await actions_for("APPROVE")) == 1
+
+    # 发起变更 → REVISE 且显式记录状态破坏 approved -> draft
+    await client.post(
+        f"/api/v1/documents/{doc_id}/revise",
+        json={"change_reason": "变更需求"},
+        headers=headers,
+    )
+    revise_logs = await actions_for("REVISE")
+    assert len(revise_logs) == 1
+    log = revise_logs[0]
+    assert log["field_changed"] == "status"
+    assert log["old_value"] == "approved"
+    assert log["new_value"] == "draft"
 
 
 # ---------------------------------------------------------------------------

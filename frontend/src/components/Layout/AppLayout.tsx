@@ -3,6 +3,7 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Layout, Menu, Dropdown, Avatar, Space } from 'antd'
 import {
     DashboardOutlined,
+    HomeOutlined,
     SettingOutlined,
     UserOutlined,
     LogoutOutlined,
@@ -54,12 +55,17 @@ export default function AppLayout() {
 
     const menuItems = [
         {
+            key: '/',
+            icon: <HomeOutlined />,
+            label: '首页',
+        },
+        {
             key: '/systems',
             icon: <ClusterOutlined />,
             label: '系统管理',
         },
         {
-            key: '/',
+            key: '/projects',
             icon: <DashboardOutlined />,
             label: '验证项目',
         },

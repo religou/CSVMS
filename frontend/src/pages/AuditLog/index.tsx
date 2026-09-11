@@ -22,9 +22,19 @@ const ACTION_OPTIONS = [
     { value: 'LOGIN', label: '登录' },
     { value: 'LOGOUT', label: '登出' },
     { value: 'SIGN', label: '电子签名' },
-    { value: 'APPROVE', label: '审批通过' },
+    { value: 'SUBMIT', label: '提交审批' },
+    { value: 'REVIEW', label: '审核通过' },
+    { value: 'APPROVE', label: '批准通过' },
     { value: 'REJECT', label: '审批拒绝' },
+    { value: 'RETURN', label: '退回修改' },
+    { value: 'WITHDRAW', label: '撤回审批' },
+    { value: 'REVISE', label: '破坏变更' },
+    { value: 'SIGNATURE_VOID', label: '签名失效（文档变更）' },
 ]
+
+const ACTION_LABELS: Record<string, string> = Object.fromEntries(
+    ACTION_OPTIONS.map((o) => [o.value, o.label]),
+)
 
 const RESOURCE_TYPES = [
     { value: 'document', label: '文档' },
@@ -41,8 +51,14 @@ const ACTION_COLORS: Record<string, string> = {
     LOGIN: 'cyan',
     LOGOUT: 'default',
     SIGN: 'purple',
+    SUBMIT: 'geekblue',
+    REVIEW: 'cyan',
     APPROVE: 'green',
     REJECT: 'red',
+    RETURN: 'orange',
+    WITHDRAW: 'default',
+    REVISE: 'volcano',
+    SIGNATURE_VOID: 'red',
 }
 
 export default function AuditLogPage() {
@@ -97,15 +113,17 @@ export default function AuditLogPage() {
         {
             title: '操作',
             dataIndex: 'action',
-            width: 100,
+            width: 110,
             render: (val: string) => (
-                <Tag color={ACTION_COLORS[val] || 'default'}>{val}</Tag>
+                <Tag color={ACTION_COLORS[val] || 'default'}>
+                    {ACTION_LABELS[val] || val}
+                </Tag>
             ),
         },
         {
             title: '资源类型',
             dataIndex: 'resource_type',
-            width: 80,
+            width: 90,
             render: (val: string) => {
                 const opt = RESOURCE_TYPES.find((r) => r.value === val)
                 return opt?.label || val
@@ -245,7 +263,8 @@ export default function AuditLogPage() {
                             {selectedLog.username}
                         </Descriptions.Item>
                         <Descriptions.Item label="操作">
-                            {selectedLog.action}
+                            {ACTION_LABELS[selectedLog.action] ||
+                                selectedLog.action}
                         </Descriptions.Item>
                         <Descriptions.Item label="资源类型">
                             {RESOURCE_TYPES.find(

@@ -1,22 +1,7 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import {
-    Table,
-    Tag,
-    Tabs,
-    Button,
-    Modal,
-    Form,
-    Input,
-    Select,
-    message,
-} from 'antd'
+import { Table, Tag, Button, Modal, Form, Input, Select, message } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
-import {
-    workflowService,
-    WorkflowItem,
-    WorkflowTemplate,
-} from '@/services/workflows'
+import { workflowService, WorkflowTemplate } from '@/services/workflows'
 import { useDictItems } from '@/hooks/useDictItems'
 import { useProjectStore } from '@/stores/projectStore'
 
@@ -25,48 +10,23 @@ const STEP_NAME_MAP: Record<string, string> = {
     approve: '批准',
 }
 
-const STATUS_MAP: Record<string, { label: string; color: string }> = {
-    pending: { label: '待处理', color: 'default' },
-    in_progress: { label: '进行中', color: 'processing' },
-    approved: { label: '已批准', color: 'success' },
-    rejected: { label: '已拒绝', color: 'error' },
-    cancelled: { label: '已撤回', color: 'warning' },
-}
-
 export default function WorkflowsPage() {
     const { options: docTypeOptions } = useDictItems('doc_type')
     const { options: projectRoleOptions } = useDictItems('project_role')
-    const navigate = useNavigate()
     const currentProject = useProjectStore((state) => state.currentProject)
     const canManageWorkflows =
         currentProject?.current_user_permissions.includes(
             'project.workflows.manage',
         ) ?? false
-    const [activeTab, setActiveTab] = useState('pending')
-    const [pendingList, setPendingList] = useState<WorkflowItem[]>([])
     const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
-    const [loading, setLoading] = useState(false)
     const [templateModalOpen, setTemplateModalOpen] = useState(false)
     const [editingTemplate, setEditingTemplate] =
         useState<WorkflowTemplate | null>(null)
     const [form] = Form.useForm()
 
     useEffect(() => {
-        fetchPending()
         fetchTemplates()
     }, [])
-
-    const fetchPending = async () => {
-        setLoading(true)
-        try {
-            const res = await workflowService.getMyPending()
-            setPendingList(res.data)
-        } catch {
-            // ignore
-        } finally {
-            setLoading(false)
-        }
-    }
 
     const fetchTemplates = async () => {
         try {
@@ -88,12 +48,10 @@ export default function WorkflowsPage() {
         form.setFieldsValue({
             doc_type: template.doc_type,
             name: template.name,
-            review_role: template.steps?.find(
-                (s) => s.step_type === 'review',
-            )?.project_role,
-            approve_role: template.steps?.find(
-                (s) => s.step_type === 'approve',
-            )?.project_role,
+            review_role: template.steps?.find((s) => s.step_type === 'review')
+                ?.project_role,
+            approve_role: template.steps?.find((s) => s.step_type === 'approve')
+                ?.project_role,
         })
         setTemplateModalOpen(true)
     }
@@ -123,7 +81,10 @@ export default function WorkflowsPage() {
         }
         try {
             if (editingTemplate) {
-                await workflowService.updateTemplate(editingTemplate.id, payload)
+                await workflowService.updateTemplate(
+                    editingTemplate.id,
+                    payload,
+                )
                 message.success('模板更新成功')
             } else {
                 await workflowService.createTemplate(payload)
@@ -136,53 +97,10 @@ export default function WorkflowsPage() {
         }
     }
 
-    const pendingColumns = [
-        {
-            title: '文档',
-            dataIndex: 'document_id',
-            render: (val: string) => (
-                <a onClick={() => navigate(`/documents/${val}`)}>
-                    {val.slice(0, 8)}...
-                </a>
-            ),
-        },
-        {
-            title: '状态',
-            dataIndex: 'status',
-            width: 100,
-            render: (val: string) => {
-                const info = STATUS_MAP[val] || { label: val, color: 'default' }
-                return <Tag color={info.color}>{info.label}</Tag>
-            },
-        },
-        {
-            title: '当前步骤',
-            render: (_: unknown, record: WorkflowItem) => {
-                const step = record.steps.find(
-                    (s) => s.step_order === record.current_step_order,
-                )
-                return step ? step.name : '-'
-            },
-        },
-        { title: '发起人', dataIndex: 'initiator_name' },
-        {
-            title: '发起时间',
-            dataIndex: 'initiated_at',
-            render: (val: string) => new Date(val).toLocaleString('zh-CN'),
-        },
-        {
-            title: '操作',
-            render: (_: unknown, record: WorkflowItem) => (
-                <a onClick={() => navigate(`/documents/${record.document_id}`)}>
-                    查看
-                </a>
-            ),
-        },
-    ]
-
     const roleLabel = (code?: string) =>
         code
-            ? projectRoleOptions.find((opt) => opt.value === code)?.label ?? code
+            ? (projectRoleOptions.find((opt) => opt.value === code)?.label ??
+              code)
             : '-'
 
     const stepRole = (
@@ -233,47 +151,21 @@ export default function WorkflowsPage() {
 
     return (
         <div>
-            <Tabs
-                activeKey={activeTab}
-                onChange={setActiveTab}
-                tabBarExtraContent={
-                    activeTab === 'templates' && canManageWorkflows ? (
-                        <Button
-                            type="primary"
-                            icon={<PlusOutlined />}
-                            onClick={openCreateTemplate}>
-                            新建模板
-                        </Button>
-                    ) : null
-                }
-                items={[
-                    {
-                        key: 'pending',
-                        label: `待我审批 (${pendingList.length})`,
-                        children: (
-                            <Table
-                                rowKey="id"
-                                columns={pendingColumns}
-                                dataSource={pendingList}
-                                loading={loading}
-                                pagination={false}
-                                locale={{ emptyText: '暂无待审批事项' }}
-                            />
-                        ),
-                    },
-                    {
-                        key: 'templates',
-                        label: '流程模板',
-                        children: (
-                            <Table
-                                rowKey="id"
-                                columns={templateColumns}
-                                dataSource={templates}
-                                pagination={false}
-                            />
-                        ),
-                    },
-                ]}
+            {canManageWorkflows && (
+                <div style={{ marginBottom: 16, textAlign: 'right' }}>
+                    <Button
+                        type="primary"
+                        icon={<PlusOutlined />}
+                        onClick={openCreateTemplate}>
+                        新建模板
+                    </Button>
+                </div>
+            )}
+            <Table
+                rowKey="id"
+                columns={templateColumns}
+                dataSource={templates}
+                pagination={false}
             />
 
             <Modal
@@ -307,10 +199,7 @@ export default function WorkflowsPage() {
                         name="name"
                         label="模板名称"
                         rules={[{ required: true }]}>
-                        <Input
-                            disabled
-                            placeholder="根据文档类型自动生成"
-                        />
+                        <Input disabled placeholder="根据文档类型自动生成" />
                     </Form.Item>
                     <Form.Item
                         name="review_role"

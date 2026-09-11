@@ -15,6 +15,7 @@ import AdminPage from '@/pages/Admin'
 import RoleManagementPage from '@/pages/Admin/Roles'
 import DictManagementPage from '@/pages/Admin/DictManagement'
 import ProjectsPage from '@/pages/Projects'
+import HomePage from '@/pages/Home'
 import DocumentsPage from '@/pages/Documents'
 import DocumentDetailPage from '@/pages/Documents/Detail'
 import WorkflowsPage from '@/pages/Workflows'
@@ -205,7 +206,8 @@ function App() {
     return (
         <Routes>
             <Route element={<AppLayout />}>
-                <Route path="/" element={<ProjectsPage />} />
+                <Route path="/" element={<HomePage />} />
+                <Route path="/projects" element={<ProjectsPage />} />
                 <Route path="/systems" element={<SystemsPage />} />
                 <Route path="/admin" element={<AdminIndexRedirect />} />
                 <Route

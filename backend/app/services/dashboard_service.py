@@ -4,6 +4,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document, DocumentStatus
+from app.models.project import ProjectMember
 from app.models.workflow import Workflow, WorkflowStatus, WorkflowStep, StepStatus
 from app.models.signature import ElectronicSignature
 
@@ -104,4 +105,48 @@ class DashboardService:
             "pending_approvals": pending_count,
             "my_drafts": my_drafts,
             "total_signatures": total_signatures,
+        }
+
+    async def get_home_summary(self, user_id: str) -> dict:
+        """首页用户维度汇总：参与项目数、我的草稿（计数 + 最近 5 条）."""
+        project_count = (await self.db.execute(
+            select(func.count(func.distinct(ProjectMember.project_id))).where(
+                ProjectMember.user_id == user_id
+            )
+        )).scalar() or 0
+
+        my_draft_count = (await self.db.execute(
+            select(func.count(Document.id)).where(
+                Document.author_id == user_id,
+                Document.status == DocumentStatus.DRAFT,
+            )
+        )).scalar() or 0
+
+        drafts = (await self.db.execute(
+            select(Document)
+            .where(
+                Document.author_id == user_id,
+                Document.status == DocumentStatus.DRAFT,
+            )
+            .order_by(Document.updated_at.desc())
+            .limit(5)
+        )).scalars().all()
+
+        my_drafts = [
+            {
+                "id": d.id,
+                "title": d.title,
+                "doc_type": d.doc_type.value,
+                "doc_number": d.doc_number,
+                "version": d.version,
+                "project_id": d.project_id,
+                "updated_at": d.updated_at,
+            }
+            for d in drafts
+        ]
+
+        return {
+            "project_count": project_count,
+            "my_draft_count": my_draft_count,
+            "my_drafts": my_drafts,
         }

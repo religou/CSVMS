@@ -54,6 +54,23 @@ class Settings(BaseSettings):
     LOGIN_FAIL_LOCK_MINUTES: int = 15
     SESSION_TIMEOUT_MINUTES: int = 30
 
+    # SMTP / Notification
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_USE_TLS: bool = False
+    SMTP_FROM_ADDRESS: str = ""
+    FRONTEND_LOGIN_URL: str = "http://localhost:5173/login"
+    MEMBER_ADDED_EMAIL_SUBJECT: str = "{project_name} 项目成员通知"
+    MEMBER_ADDED_EMAIL_BODY: str = (
+        "您好 {full_name}，\n\n您已被添加至项目「{project_name}」，角色：{role_label}。\n登录地址：{login_url}\n"
+    )
+    MEMBER_ROLE_CHANGED_EMAIL_SUBJECT: str = "{project_name} 项目角色变更通知"
+    MEMBER_ROLE_CHANGED_EMAIL_BODY: str = (
+        "您好 {full_name}，\n\n您在项目「{project_name}」中的角色已变更为：{role_label}。\n登录地址：{login_url}\n"
+    )
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

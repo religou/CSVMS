@@ -7,13 +7,39 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BusinessError, PermissionDeniedError
+from app.models.audit_log import AuditLog
 from app.models.document import Document, DocumentVersion, DocumentStatus, DocumentType
+from app.models.signature import ElectronicSignature
+from app.models.workflow import Workflow, WorkflowStatus
 from app.models.urs import URSItem, URSReference
 from app.models.user import User
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.urs import URSItemCreate, URSItemUpdate, URSReferenceCreate
 from app.services.permission_service import user_has_role
 from app.services.project_service import ProjectService
+
+
+def _parse_major(version: str) -> int:
+    """从版本标签解析主版本号，无法解析时按 0 处理."""
+    try:
+        return int(version.split(".")[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+def bump_major_version(version: str) -> str:
+    """主版本进位：x.y -> (x+1).0（文档批准通过时）."""
+    return f"{_parse_major(version) + 1}.0"
+
+
+def bump_minor_version(version: str) -> str:
+    """次版本进位：x.y -> x.(y+1)（已批准文档发起变更回到草稿时）."""
+    parts = version.split(".")
+    try:
+        major, minor = int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return version
+    return f"{major}.{minor + 1}"
 
 
 class DocumentService:
@@ -142,40 +168,98 @@ class DocumentService:
         await self.db.refresh(document)
         return document
 
-    async def create_version_snapshot(
-        self, document_id: str, user_id: str, change_reason: str | None = None
-    ) -> DocumentVersion:
-        """创建文档版本快照（提交审核时自动调用）."""
-        document = await self.get_document(document_id)
+    async def revise_document(
+        self, document_id: str, user_id: str, change_reason: str, ip_address: str | None = None
+    ) -> Document:
+        """对已批准文档发起变更：冻结当前已批准版本为不可变快照，文档退回草稿。
 
-        # 计算新版本号
+        单事务内完成：快照旧版本 -> 状态 APPROVED->DRAFT -> 次版本进位 -> 审计。
+        历史版本与其电子签名保持不变、永久保留。
+        """
+        if not change_reason or not change_reason.strip():
+            raise BusinessError("发起变更必须填写变更原因")
+
+        document = await self.get_document(document_id)
+        if document.status != DocumentStatus.APPROVED:
+            raise BusinessError("只有已批准的文档可以发起变更")
+
+        # 冻结当前已批准版本为不可变快照（保留其原始版本标签）
         result = await self.db.execute(
             select(func.max(DocumentVersion.version_number)).where(
                 DocumentVersion.document_id == document_id
             )
         )
         max_version = result.scalar() or 0
-        new_version_number = max_version + 1
-
-        # 主版本号在批准后递增，次版本号在提交审核时递增
-        major = new_version_number
-        version_label = f"{major}.0"
-
-        version = DocumentVersion(
+        self.db.add(DocumentVersion(
             document_id=document_id,
-            version_number=new_version_number,
-            version_label=version_label,
+            version_number=max_version + 1,
+            version_label=document.version,
             content=document.content,
             change_reason=change_reason,
             created_by=user_id,
-        )
-        self.db.add(version)
+        ))
 
-        # 更新文档版本号
-        document.version = version_label
+        # 打破之前状态：活动文档退回草稿，次版本进位
+        old_status = document.status.value
+        approved_version = document.version  # 被取代的已批准版本标签（如 "1.0"）
+        document.status = DocumentStatus.DRAFT
+        document.version = bump_minor_version(document.version)
+        document.updated_at = datetime.now(timezone.utc)
+
+        # 审计轨迹：显式记录「批准状态被破坏」（同事务）
+        actor = await self.db.get(User, user_id)
+        actor_name = actor.username if actor else "system"
+        self.db.add(AuditLog(
+            user_id=user_id,
+            username=actor_name,
+            action="REVISE",
+            resource_type="document",
+            resource_id=document_id,
+            resource_name="作废原批准状态，退回草稿",
+            field_changed="status",
+            old_value=old_status,
+            new_value=DocumentStatus.DRAFT.value,
+            reason=change_reason,
+            ip_address=ip_address,
+        ))
+
+        # 审计轨迹：为被取代的每条电子签名各记一条「签名失效」（不销毁签名，is_valid 保持 True）
+        # 签名以其所属的已批准工作流为准（签名写入时版本尚未进位，故按 workflow_id 匹配最可靠）
+        approved_wf_id = (await self.db.execute(
+            select(Workflow.id)
+            .where(
+                Workflow.document_id == document_id,
+                Workflow.status == WorkflowStatus.APPROVED,
+            )
+            .order_by(Workflow.completed_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        voided_sigs = []
+        if approved_wf_id:
+            voided_sigs = (await self.db.execute(
+                select(ElectronicSignature).where(
+                    ElectronicSignature.workflow_id == approved_wf_id
+                )
+            )).scalars().all()
+        for sig in voided_sigs:
+            signer_name = sig.user.full_name if sig.user else sig.user_id
+            self.db.add(AuditLog(
+                user_id=user_id,
+                username=actor_name,
+                action="SIGNATURE_VOID",
+                resource_type="document",
+                resource_id=document_id,
+                resource_name=f"电子签名失效：{signer_name}「{sig.meaning}」（签名 {sig.id}）",
+                field_changed="signature",
+                old_value=f"有效(批准 {approved_version})",
+                new_value="被变更取代",
+                reason=change_reason,
+                ip_address=ip_address,
+            ))
+
         await self.db.commit()
-        await self.db.refresh(version)
-        return version
+        await self.db.refresh(document)
+        return document
 
     async def get_versions(self, document_id: str) -> list[DocumentVersion]:
         """获取文档版本历史."""

@@ -25,6 +25,12 @@ class DocumentUpdate(BaseModel):
     summary: str | None = None
 
 
+class DocumentReviseRequest(BaseModel):
+    """对已批准文档发起变更请求."""
+
+    change_reason: str
+
+
 class DocumentResponse(BaseModel):
     """文档响应."""
 

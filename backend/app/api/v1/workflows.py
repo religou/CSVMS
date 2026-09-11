@@ -1,7 +1,8 @@
 """审批工作流 API 路由."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,6 +13,7 @@ from app.models.workflow import Workflow, WorkflowAction as WorkflowActionModel
 from app.schemas.workflow import (
     WorkflowActionRequest,
     WorkflowActionResponse,
+    WorkflowApprovalRequest,
     WorkflowResponse,
     WorkflowStepResponse,
     WorkflowSubmit,
@@ -94,38 +96,58 @@ async def update_workflow_template(
 @router.post("/submit", response_model=WorkflowResponse)
 async def submit_for_review(
     data: WorkflowSubmit,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """提交文档进入审批流程."""
+    ip_address = request.client.host if request.client else None
     service = WorkflowService(db)
-    workflow = await service.submit_document(data.document_id, current_user.id)
+    workflow = await service.submit_document(
+        data.document_id, current_user.id, ip_address=ip_address
+    )
     return _build_workflow_response(workflow)
 
 
 @router.post("/{workflow_id}/approve", response_model=WorkflowResponse)
 async def approve_workflow(
     workflow_id: str,
-    data: WorkflowActionRequest,
+    data: WorkflowApprovalRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """批准当前步骤."""
+    """批准当前步骤（需电子签名）."""
+    ip_address = request.client.host if request.client else None
     service = WorkflowService(db)
-    workflow = await service.approve_step(workflow_id, current_user.id, data.comment)
+    workflow = await service.approve_step(
+        workflow_id,
+        current_user.id,
+        password=data.password,
+        comment=data.comment,
+        ip_address=ip_address,
+    )
     return _build_workflow_response(workflow)
 
 
 @router.post("/{workflow_id}/reject", response_model=WorkflowResponse)
 async def reject_workflow(
     workflow_id: str,
-    data: WorkflowActionRequest,
+    data: WorkflowApprovalRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """拒绝当前步骤."""
+    """拒绝当前步骤（需电子签名）."""
+    ip_address = request.client.host if request.client else None
     service = WorkflowService(db)
-    workflow = await service.reject_step(workflow_id, current_user.id, data.comment or "")
+    workflow = await service.reject_step(
+        workflow_id,
+        current_user.id,
+        data.comment or "",
+        password=data.password,
+        ip_address=ip_address,
+    )
     return _build_workflow_response(workflow)
 
 
@@ -133,24 +155,30 @@ async def reject_workflow(
 async def return_workflow(
     workflow_id: str,
     data: WorkflowActionRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """退回到上一步."""
+    ip_address = request.client.host if request.client else None
     service = WorkflowService(db)
-    workflow = await service.return_step(workflow_id, current_user.id, data.comment or "")
+    workflow = await service.return_step(
+        workflow_id, current_user.id, data.comment or "", ip_address=ip_address
+    )
     return _build_workflow_response(workflow)
 
 
 @router.post("/{workflow_id}/withdraw", response_model=WorkflowResponse)
 async def withdraw_workflow(
     workflow_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """撤回审批."""
+    ip_address = request.client.host if request.client else None
     service = WorkflowService(db)
-    workflow = await service.withdraw(workflow_id, current_user.id)
+    workflow = await service.withdraw(workflow_id, current_user.id, ip_address=ip_address)
     return _build_workflow_response(workflow)
 
 
@@ -225,10 +253,16 @@ async def get_workflow_actions(
 
 def _build_workflow_response(workflow: Workflow) -> WorkflowResponse:
     """构建工作流响应."""
+    # 仅当 document 关系已加载时才带出文档信息，避免异步惰性加载
+    document = None
+    if "document" not in sa_inspect(workflow).unloaded:
+        document = workflow.document
     return WorkflowResponse(
         id=workflow.id,
         template_id=workflow.template_id,
         document_id=workflow.document_id,
+        document_title=document.title if document else None,
+        project_id=document.project_id if document else None,
         status=workflow.status,
         current_step_order=workflow.current_step_order,
         initiated_by=workflow.initiated_by,
