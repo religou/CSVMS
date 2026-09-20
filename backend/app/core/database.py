@@ -41,9 +41,18 @@ class Base(DeclarativeBase):
 
 
 async def get_db() -> AsyncSession:
-    """获取数据库会话（依赖注入用）."""
+    """获取数据库会话（依赖注入用）.
+
+    提交不在这里发生 —— 见 ADR-0004 与 `app.api.transaction.transactional`。
+    这里只留「未提交则回滚」的安全网，且**永不抛异常**：teardown 运行时响应已
+    开始发送，抛出的异常无法变成错误响应。
+    """
     async with get_session_factory()() as session:
         try:
             yield session
         finally:
+            try:
+                await session.rollback()
+            except Exception:  # noqa: BLE001 - 安全网不得掩盖真正的响应
+                pass
             await session.close()

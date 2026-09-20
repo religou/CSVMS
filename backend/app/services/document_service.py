@@ -96,7 +96,8 @@ class DocumentService:
             author_id=author_id,
         )
         self.db.add(document)
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(document)
         return document
 
@@ -164,7 +165,8 @@ class DocumentService:
             document.summary = data.summary
 
         document.updated_at = datetime.now(timezone.utc)
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(document)
         return document
 
@@ -257,7 +259,9 @@ class DocumentService:
                 ip_address=ip_address,
             ))
 
-        await self.db.commit()
+        # 不提交：版本快照、状态跃迁与两类审计轨迹必须同生共死
+        # （ADR-0002、ADR-0003、ADR-0004）
+        await self.db.flush()
         await self.db.refresh(document)
         return document
 
@@ -280,7 +284,8 @@ class DocumentService:
             raise BusinessError("只有文档作者可以删除文档")
 
         await self.db.delete(document)
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
 
     async def _require_document_manage_permission(
         self, document: Document, user: User
@@ -352,16 +357,19 @@ class DocumentService:
                 description=description,
                 created_by=user.id,
             )
-            self.db.add(item)
+            # 用 savepoint 圈住这次尝试：编号冲突只回滚这一次插入，不动本请求
+            # 已暂存的其余工作（ADR-0004）。add 必须在 savepoint 内，回滚时
+            # 待插入的对象才会被一并撤销。
             try:
-                await self.db.flush()
+                async with self.db.begin_nested():
+                    self.db.add(item)
+                    await self.db.flush()
                 break
             except IntegrityError:
-                await self.db.rollback()
                 if attempt == self._MAX_ITEM_CODE_RETRIES - 1:
                     raise BusinessError("条目编号生成冲突，请重试")
 
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.refresh(item)
         return item
 
@@ -389,7 +397,8 @@ class DocumentService:
             item.description = data.description
 
         item.updated_at = datetime.now(timezone.utc)
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(item)
         return item
 
@@ -412,7 +421,8 @@ class DocumentService:
             raise BusinessError("该条目已被引用，无法删除")
 
         await self.db.delete(item)
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
 
     _REFERENCING_DOC_TYPES = {
         DocumentType.FS,
@@ -464,7 +474,8 @@ class DocumentService:
             created_by=user.id,
         )
         self.db.add(reference)
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(reference)
         return reference
 
@@ -500,7 +511,8 @@ class DocumentService:
         reference = await self._get_urs_reference(ref_document_id, reference_id)
 
         await self.db.delete(reference)
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
 
     async def list_urs_references(self, ref_document_id: str) -> list[URSReference]:
         """获取指定文档下的 URS 引用列表."""

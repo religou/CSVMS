@@ -45,8 +45,8 @@ class AuditService:
             timestamp=datetime.now(timezone.utc),
         )
         self.db.add(entry)
-        await self.db.commit()
-        await self.db.refresh(entry)
+        # 不提交：审计轨迹必须与引发它的状态变更处于同一事务（ADR-0003、ADR-0004）
+        await self.db.flush()
         return entry
 
     async def query(

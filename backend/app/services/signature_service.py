@@ -76,7 +76,9 @@ class SignatureService:
             is_valid=True,
         )
         self.db.add(signature)
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）。
+        # refresh 在事务内重新 SELECT，顺带载入 lazy="selectin" 的 user 关系供响应使用。
+        await self.db.flush()
         await self.db.refresh(signature)
         return signature
 

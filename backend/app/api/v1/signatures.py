@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.api.deps import get_current_user
+from app.api.transaction import transactional
 from app.models.user import User
 from app.schemas.signature import SignatureRequest, SignatureResponse, SignatureVerifyResponse
 from app.services.signature_service import SignatureService
@@ -14,6 +15,7 @@ router = APIRouter(prefix="/signatures", tags=["电子签名"])
 
 
 @router.post("", response_model=SignatureResponse)
+@transactional
 async def create_signature(
     data: SignatureRequest,
     request: Request,

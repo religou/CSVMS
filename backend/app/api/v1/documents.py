@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.api.deps import get_current_user
+from app.api.transaction import transactional
 from app.models.user import User
 from app.models.document import DocumentType, DocumentStatus
 from app.models.urs import URSItem, URSReference
@@ -48,6 +49,7 @@ def _doc_response(doc, author_name: str | None = None) -> DocumentResponse:
 
 
 @router.post("", response_model=DocumentResponse)
+@transactional
 async def create_document(
     data: DocumentCreate,
     db: AsyncSession = Depends(get_db),
@@ -106,6 +108,7 @@ async def get_document(
 
 
 @router.put("/{document_id}", response_model=DocumentResponse)
+@transactional
 async def update_document(
     document_id: str,
     data: DocumentUpdate,
@@ -149,6 +152,7 @@ async def update_document(
 
 
 @router.post("/{document_id}/revise", response_model=DocumentResponse)
+@transactional
 async def revise_document(
     document_id: str,
     data: DocumentReviseRequest,
@@ -166,6 +170,7 @@ async def revise_document(
 
 
 @router.delete("/{document_id}")
+@transactional
 async def delete_document(
     document_id: str,
     db: AsyncSession = Depends(get_db),
@@ -217,6 +222,7 @@ def _urs_reference_response(reference: URSReference) -> URSReferenceResponse:
 
 
 @router.post("/{document_id}/urs-items", response_model=URSItemResponse)
+@transactional
 async def create_urs_item(
     document_id: str,
     data: URSItemCreate,
@@ -242,6 +248,7 @@ async def list_urs_items(
 
 
 @router.put("/{document_id}/urs-items/{item_id}", response_model=URSItemResponse)
+@transactional
 async def update_urs_item(
     document_id: str,
     item_id: str,
@@ -256,6 +263,7 @@ async def update_urs_item(
 
 
 @router.delete("/{document_id}/urs-items/{item_id}")
+@transactional
 async def delete_urs_item(
     document_id: str,
     item_id: str,
@@ -269,6 +277,7 @@ async def delete_urs_item(
 
 
 @router.post("/{document_id}/urs-references", response_model=URSReferenceResponse)
+@transactional
 async def create_urs_reference(
     document_id: str,
     data: URSReferenceCreate,
@@ -294,6 +303,7 @@ async def list_urs_references(
 
 
 @router.delete("/{document_id}/urs-references/{reference_id}")
+@transactional
 async def delete_urs_reference(
     document_id: str,
     reference_id: str,

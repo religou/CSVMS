@@ -70,3 +70,18 @@ async def db_session():
     """测试用数据库会话."""
     async with TestSessionLocal() as session:
         yield session
+
+
+@pytest_asyncio.fixture
+async def tx_session():
+    """与请求 seam 同边界的会话（ADR-0004）.
+
+    测试内不提交，结束时统一回滚 —— 与 `@transactional` 之前的状态一致。
+    直接调用 service 的测试用它，就能在同一个未提交事务里同时断言状态跃迁与
+    审计轨迹写入；这是以前只能靠 `GET /api/v1/audit-logs` 事后反查的东西。
+    """
+    async with TestSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.rollback()
