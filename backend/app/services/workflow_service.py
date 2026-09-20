@@ -1,6 +1,5 @@
 """审批工作流服务 - 状态机引擎."""
 
-import hashlib
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -8,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BusinessError
-from app.core.security import verify_password
 from app.models.audit_log import AuditLog
 from app.models.document import Document, DocumentStatus, DocumentType
 from app.models.signature import ElectronicSignature
@@ -25,6 +23,7 @@ from app.models.workflow import (
     WorkflowTemplateStep,
 )
 from app.services.document_service import DocumentService, bump_major_version
+from app.services.signature_service import SignatureService
 
 
 class WorkflowService:
@@ -260,8 +259,15 @@ class WorkflowService:
         current_step = self._get_current_step(workflow)
         self._validate_actor(current_step, actor_id)
 
-        # 重新验证身份 - 电子签名前置条件 (21 CFR Part 11)
-        signer = await self._verify_signer(actor_id, password)
+        # 电子签名（含 §11.200 重认证）先于状态变更：密码错误时不留下任何改动
+        signature = await SignatureService(self.db).sign_for_step(
+            actor_id=actor_id,
+            password=password,
+            workflow=workflow,
+            step=current_step,
+            action=ActionType.APPROVE,
+            ip_address=ip_address,
+        )
 
         # 更新步骤状态
         current_step.status = StepStatus.APPROVED
@@ -278,9 +284,9 @@ class WorkflowService:
             comment=comment,
         ))
 
-        # 写入电子签名 + 审计轨迹（同一事务）
-        await self._record_signature_and_audit(
-            signer=signer,
+        # 审计轨迹（同一事务）
+        self._add_step_audit(
+            signature=signature,
             workflow=workflow,
             step=current_step,
             action=ActionType.APPROVE,
@@ -326,8 +332,15 @@ class WorkflowService:
         current_step = self._get_current_step(workflow)
         self._validate_actor(current_step, actor_id)
 
-        # 重新验证身份 - 电子签名前置条件 (21 CFR Part 11)
-        signer = await self._verify_signer(actor_id, password)
+        # 电子签名（含 §11.200 重认证）先于状态变更：密码错误时不留下任何改动
+        signature = await SignatureService(self.db).sign_for_step(
+            actor_id=actor_id,
+            password=password,
+            workflow=workflow,
+            step=current_step,
+            action=ActionType.REJECT,
+            ip_address=ip_address,
+        )
 
         # 更新步骤状态
         current_step.status = StepStatus.REJECTED
@@ -348,9 +361,9 @@ class WorkflowService:
             comment=comment,
         ))
 
-        # 写入电子签名 + 审计轨迹（同一事务）
-        await self._record_signature_and_audit(
-            signer=signer,
+        # 审计轨迹（同一事务）
+        self._add_step_audit(
+            signature=signature,
             workflow=workflow,
             step=current_step,
             action=ActionType.REJECT,
@@ -553,67 +566,20 @@ class WorkflowService:
         user = await self.db.get(User, user_id)
         return user.username if user else "system"
 
-    async def _verify_signer(self, actor_id: str, password: str) -> User:
-        """电子签名重认证：校验当前用户密码 (21 CFR Part 11 §11.200)."""
-        user = await self.db.get(User, actor_id)
-        if not user:
-            raise BusinessError("用户不存在")
-        if not verify_password(password, user.password_hash):
-            raise BusinessError("身份验证失败：密码错误")
-        if not user.is_active:
-            raise BusinessError("账户已禁用")
-        return user
-
-    @staticmethod
-    def _signature_meaning(step_type: StepType, action: ActionType) -> str:
-        """按步骤类型与动作生成固定签名含义."""
-        if action == ActionType.REJECT:
-            return "我已审核此文档，予以退回"
-        if step_type == StepType.APPROVE:
-            return "我已批准此文档，同意生效"
-        return "我已审核此文档，内容准确完整"
-
-    async def _record_signature_and_audit(
+    def _add_step_audit(
         self,
         *,
-        signer: User,
+        signature: ElectronicSignature,
         workflow: Workflow,
         step: WorkflowStep,
         action: ActionType,
         comment: str | None,
         ip_address: str | None,
     ) -> None:
-        """写入电子签名与系统审计轨迹.
+        """审批动作的审计轨迹：区分审核步/批准步/拒绝，统一归属文档（ADR-0003）.
 
-        与本 service 的其余方法一样只 stage 不提交 —— 事务归属在请求 seam 上
-        （ADR-0004），无需再单独声明。
+        签名本身由 `SignatureService` 写入（ADR-0005），这里只记审计。
         """
-        document = await self.db.get(Document, workflow.document_id)
-        if not document:
-            raise BusinessError("文档不存在")
-
-        meaning = self._signature_meaning(step.step_type, action)
-        timestamp = datetime.now(timezone.utc)
-        content_hash = hashlib.sha256(
-            f"{document.content or ''}{signer.id}{timestamp.isoformat()}".encode("utf-8")
-        ).hexdigest()
-
-        signature = ElectronicSignature(
-            user_id=signer.id,
-            document_id=document.id,
-            document_version=document.version,
-            meaning=meaning,
-            workflow_id=workflow.id,
-            workflow_step_id=step.id,
-            content_hash=content_hash,
-            ip_address=ip_address,
-            timestamp=timestamp,
-            is_valid=True,
-        )
-        self.db.add(signature)
-        await self.db.flush()
-
-        # 审计动作：区分审核步/批准步/拒绝，统一归属文档
         if action == ActionType.REJECT:
             audit_action, label = "REJECT", "审批拒绝"
         elif step.step_type == StepType.REVIEW:
@@ -621,14 +587,14 @@ class WorkflowService:
         else:
             audit_action, label = "APPROVE", "批准通过，文档生效"
         self.db.add(AuditLog(
-            user_id=signer.id,
-            username=signer.username,
+            user_id=signature.user_id,
+            username=signature.user.username,
             action=audit_action,
             resource_type="document",
-            resource_id=document.id,
+            resource_id=signature.document_id,
             resource_name=f"{label}（工作流 {workflow.id}，电子签名 {signature.id}）",
             reason=comment,
             ip_address=ip_address,
-            timestamp=timestamp,
+            timestamp=signature.timestamp,
         ))
 

@@ -4,16 +4,20 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.models.signature import SignatureType
+
 
 class SignatureRequest(BaseModel):
-    """电子签名请求 - 需重新验证身份."""
+    """工作流之外的独立签名请求 - 需重新输入密码.
 
-    username: str = Field(..., description="用户名（重新验证）")
-    password: str = Field(..., description="密码（重新验证）")
+    不含 `username`：身份组件取自当前登录用户，避免冒签（ADR-0001）。
+    不含 `meaning`：签名含义由 `signature_type` 推导，调用方不可指定（ADR-0005）。
+    不含工作流字段：绑定步骤的签名一律由审批动作产生。
+    """
+
+    password: str = Field(..., description="密码（签名前重新输入）")
     document_id: str
-    meaning: str = Field(..., description="签名含义（如：我审核了此文档）")
-    workflow_id: str | None = None
-    workflow_step_id: str | None = None
+    signature_type: SignatureType = Field(..., description="签署类型，决定签名含义")
 
 
 class SignatureResponse(BaseModel):

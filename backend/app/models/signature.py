@@ -1,5 +1,6 @@
 """电子签名数据模型 - 符合 21 CFR Part 11."""
 
+import enum
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
@@ -8,6 +9,16 @@ from sqlalchemy.dialects.mysql import CHAR
 
 from app.core.database import Base
 from app.models.user import generate_uuid, utcnow
+
+
+class SignatureType(str, enum.Enum):
+    """签署类型 - 工作流之外的独立签名的含义来源.
+
+    工作流内的签名含义由步骤类型与动作推导，不使用本枚举。
+    两者都不接受调用方自定义文本（ADR-0005）。
+    """
+
+    DRAFT = "draft"  # 起草
 
 
 class ElectronicSignature(Base):

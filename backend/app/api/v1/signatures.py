@@ -22,19 +22,16 @@ async def create_signature(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """执行电子签名 - 需重新验证身份."""
+    """执行工作流之外的独立电子签名 - 需重新输入密码."""
     ip_address = request.client.host if request.client else None
 
     service = SignatureService(db)
-    sig = await service.sign(
-        user_id=current_user.id,
-        username=data.username,
+    sig = await service.sign_standalone(
+        actor_id=current_user.id,
         password=data.password,
         document_id=data.document_id,
-        meaning=data.meaning,
+        signature_type=data.signature_type,
         ip_address=ip_address,
-        workflow_id=data.workflow_id,
-        workflow_step_id=data.workflow_step_id,
     )
 
     # 记录审计日志
@@ -45,7 +42,7 @@ async def create_signature(
         user_id=current_user.id,
         username=current_user.username,
         resource_id=data.document_id,
-        resource_name=f"电子签名: {data.meaning}",
+        resource_name=f"电子签名: {sig.meaning}",
         ip_address=ip_address,
     )
 
