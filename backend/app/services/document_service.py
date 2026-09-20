@@ -7,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BusinessError, PermissionDeniedError
-from app.models.audit_log import AuditLog
 from app.models.document import Document, DocumentVersion, DocumentStatus, DocumentType
 from app.models.signature import ElectronicSignature
 from app.models.workflow import Workflow, WorkflowStatus
@@ -15,6 +14,21 @@ from app.models.urs import URSItem, URSReference
 from app.models.user import User
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.urs import URSItemCreate, URSItemUpdate, URSReferenceCreate
+from app.services.audit_service import (
+    AuditService,
+    DocumentCreated,
+    DocumentDeleted,
+    DocumentFieldsChanged,
+    DocumentRevised,
+    FieldChange,
+    SignaturesVoided,
+    UrsItemAdded,
+    UrsItemDescriptionChanged,
+    UrsItemRemoved,
+    UrsReferenceAdded,
+    UrsReferenceRemoved,
+    VoidedSignature,
+)
 from app.services.permission_service import user_has_role
 from app.services.project_service import ProjectService
 
@@ -79,7 +93,7 @@ class DocumentService:
         return f"{doc_number}-{next_seq:03d}"
 
     async def create_document(
-        self, data: DocumentCreate, author_id: str
+        self, data: DocumentCreate, author_id: str, ip_address: str | None = None
     ) -> Document:
         """创建新文档草稿."""
         doc_number = await self._generate_doc_number(data.doc_type)
@@ -98,6 +112,17 @@ class DocumentService:
         self.db.add(document)
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
+
+        await AuditService(self.db).record(
+            DocumentCreated(
+                document_id=document.id,
+                doc_number=document.doc_number,
+                title=document.title,
+            ),
+            actor=author_id,
+            ip_address=ip_address,
+        )
+
         await self.db.refresh(document)
         return document
 
@@ -148,8 +173,15 @@ class DocumentService:
 
         return list(result.scalars().all()), total
 
+    #: 可编辑字段 —— 变更差异由本 service 自己算，端点不需要先读旧值（ADR-0006）
+    _EDITABLE_FIELDS = ("title", "content", "summary")
+
     async def update_document(
-        self, document_id: str, data: DocumentUpdate, user_id: str
+        self,
+        document_id: str,
+        data: DocumentUpdate,
+        user_id: str,
+        ip_address: str | None = None,
     ) -> Document:
         """更新文档内容（仅草稿状态可编辑）."""
         document = await self.get_document(document_id)
@@ -157,14 +189,33 @@ class DocumentService:
         if document.status != DocumentStatus.DRAFT:
             raise BusinessError("只有草稿状态的文档可以编辑")
 
-        if data.title is not None:
-            document.title = data.title
-        if data.content is not None:
-            document.content = data.content
-        if data.summary is not None:
-            document.summary = data.summary
+        changes: list[FieldChange] = []
+        for name in self._EDITABLE_FIELDS:
+            new_value = getattr(data, name)
+            if new_value is None:
+                continue
+            old_value = getattr(document, name)
+            if new_value == old_value:
+                continue
+            setattr(document, name, new_value)
+            changes.append(
+                FieldChange(field=name, old_value=old_value, new_value=new_value)
+            )
 
         document.updated_at = datetime.now(timezone.utc)
+
+        # 审计轨迹：每个变更字段各一条，与状态变更同事务（ADR-0003、ADR-0006）
+        if changes:
+            await AuditService(self.db).record(
+                DocumentFieldsChanged(
+                    document_id=document_id,
+                    title=document.title,
+                    changes=tuple(changes),
+                ),
+                actor=user_id,
+                ip_address=ip_address,
+            )
+
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
         await self.db.refresh(document)
@@ -209,21 +260,17 @@ class DocumentService:
         document.updated_at = datetime.now(timezone.utc)
 
         # 审计轨迹：显式记录「批准状态被破坏」（同事务）
-        actor = await self.db.get(User, user_id)
-        actor_name = actor.username if actor else "system"
-        self.db.add(AuditLog(
-            user_id=user_id,
-            username=actor_name,
-            action="REVISE",
-            resource_type="document",
-            resource_id=document_id,
-            resource_name="作废原批准状态，退回草稿",
-            field_changed="status",
-            old_value=old_status,
-            new_value=DocumentStatus.DRAFT.value,
-            reason=change_reason,
+        audit = AuditService(self.db)
+        await audit.record(
+            DocumentRevised(
+                document_id=document_id,
+                old_status=old_status,
+                new_status=DocumentStatus.DRAFT.value,
+                change_reason=change_reason,
+            ),
+            actor=user_id,
             ip_address=ip_address,
-        ))
+        )
 
         # 审计轨迹：为被取代的每条电子签名各记一条「签名失效」（不销毁签名，is_valid 保持 True）
         # 签名以其所属的已批准工作流为准（签名写入时版本尚未进位，故按 workflow_id 匹配最可靠）
@@ -243,21 +290,23 @@ class DocumentService:
                     ElectronicSignature.workflow_id == approved_wf_id
                 )
             )).scalars().all()
-        for sig in voided_sigs:
-            signer_name = sig.user.full_name if sig.user else sig.user_id
-            self.db.add(AuditLog(
-                user_id=user_id,
-                username=actor_name,
-                action="SIGNATURE_VOID",
-                resource_type="document",
-                resource_id=document_id,
-                resource_name=f"电子签名失效：{signer_name}「{sig.meaning}」（签名 {sig.id}）",
-                field_changed="signature",
-                old_value=f"有效(批准 {approved_version})",
-                new_value="被变更取代",
-                reason=change_reason,
-                ip_address=ip_address,
-            ))
+        await audit.record(
+            SignaturesVoided(
+                document_id=document_id,
+                approved_version=approved_version,
+                change_reason=change_reason,
+                signatures=tuple(
+                    VoidedSignature(
+                        signature_id=sig.id,
+                        signer_name=sig.user.full_name if sig.user else sig.user_id,
+                        meaning=sig.meaning,
+                    )
+                    for sig in voided_sigs
+                ),
+            ),
+            actor=user_id,
+            ip_address=ip_address,
+        )
 
         # 不提交：版本快照、状态跃迁与两类审计轨迹必须同生共死
         # （ADR-0002、ADR-0003、ADR-0004）
@@ -274,7 +323,9 @@ class DocumentService:
         )
         return list(result.scalars().all())
 
-    async def delete_document(self, document_id: str, user_id: str) -> None:
+    async def delete_document(
+        self, document_id: str, user_id: str, ip_address: str | None = None
+    ) -> None:
         """删除文档（仅草稿状态可删除）."""
         document = await self.get_document(document_id)
 
@@ -282,6 +333,17 @@ class DocumentService:
             raise BusinessError("只有草稿状态的文档可以删除")
         if document.author_id != user_id:
             raise BusinessError("只有文档作者可以删除文档")
+
+        # 审计先于删除：删掉之后就取不到编号与标题了
+        await AuditService(self.db).record(
+            DocumentDeleted(
+                document_id=document_id,
+                doc_number=document.doc_number,
+                title=document.title,
+            ),
+            actor=user_id,
+            ip_address=ip_address,
+        )
 
         await self.db.delete(document)
         # 不提交：事务归属在请求 seam 上（ADR-0004）
@@ -339,7 +401,11 @@ class DocumentService:
         return item
 
     async def create_urs_item(
-        self, document_id: str, data: URSItemCreate, user: User
+        self,
+        document_id: str,
+        data: URSItemCreate,
+        user: User,
+        ip_address: str | None = None,
     ) -> URSItem:
         """新增 URS 条目（自动生成 item_code）."""
         document = await self._require_urs_document_draft(document_id, user)
@@ -369,6 +435,12 @@ class DocumentService:
                 if attempt == self._MAX_ITEM_CODE_RETRIES - 1:
                     raise BusinessError("条目编号生成冲突，请重试")
 
+        await AuditService(self.db).record(
+            UrsItemAdded(document_id=document_id, item_code=item.item_code),
+            actor=user,
+            ip_address=ip_address,
+        )
+
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.refresh(item)
         return item
@@ -385,25 +457,48 @@ class DocumentService:
         return list(result.scalars().all())
 
     async def update_urs_item(
-        self, document_id: str, item_id: str, data: URSItemUpdate, user: User
+        self,
+        document_id: str,
+        item_id: str,
+        data: URSItemUpdate,
+        user: User,
+        ip_address: str | None = None,
     ) -> URSItem:
         """更新 URS 条目（item_code 不可修改）."""
         await self._require_urs_document_draft(document_id, user)
         item = await self._get_urs_item(document_id, item_id)
 
+        old_description = item.description
         if data.description is not None:
             if not data.description.strip():
                 raise BusinessError("条目描述不能为空")
             item.description = data.description
 
         item.updated_at = datetime.now(timezone.utc)
+
+        if item.description != old_description:
+            await AuditService(self.db).record(
+                UrsItemDescriptionChanged(
+                    document_id=document_id,
+                    item_code=item.item_code,
+                    old_value=old_description,
+                    new_value=item.description,
+                ),
+                actor=user,
+                ip_address=ip_address,
+            )
+
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
         await self.db.refresh(item)
         return item
 
     async def delete_urs_item(
-        self, document_id: str, item_id: str, user: User
+        self,
+        document_id: str,
+        item_id: str,
+        user: User,
+        ip_address: str | None = None,
     ) -> None:
         """删除 URS 条目.
 
@@ -420,6 +515,13 @@ class DocumentService:
         if ref_count > 0:
             raise BusinessError("该条目已被引用，无法删除")
 
+        # 审计先于删除：删掉之后就取不到条目编号了
+        await AuditService(self.db).record(
+            UrsItemRemoved(document_id=document_id, item_code=item.item_code),
+            actor=user,
+            ip_address=ip_address,
+        )
+
         await self.db.delete(item)
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
@@ -433,7 +535,11 @@ class DocumentService:
     }
 
     async def create_urs_reference(
-        self, ref_document_id: str, data: URSReferenceCreate, user: User
+        self,
+        ref_document_id: str,
+        data: URSReferenceCreate,
+        user: User,
+        ip_address: str | None = None,
     ) -> URSReference:
         """新增 URS 引用.
 
@@ -476,6 +582,15 @@ class DocumentService:
         self.db.add(reference)
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
+
+        await AuditService(self.db).record(
+            UrsReferenceAdded(
+                document_id=ref_document_id, item_code=urs_item.item_code
+            ),
+            actor=user,
+            ip_address=ip_address,
+        )
+
         await self.db.refresh(reference)
         return reference
 
@@ -495,7 +610,11 @@ class DocumentService:
         return reference
 
     async def delete_urs_reference(
-        self, ref_document_id: str, reference_id: str, user: User
+        self,
+        ref_document_id: str,
+        reference_id: str,
+        user: User,
+        ip_address: str | None = None,
     ) -> None:
         """删除 URS 引用.
 
@@ -509,6 +628,18 @@ class DocumentService:
             raise BusinessError("只有草稿状态的文档可以删除 URS 引用")
 
         reference = await self._get_urs_reference(ref_document_id, reference_id)
+
+        # 审计先于删除：删掉之后就取不到被引用条目的编号了
+        await AuditService(self.db).record(
+            UrsReferenceRemoved(
+                document_id=ref_document_id,
+                item_code=reference.urs_item.item_code
+                if reference.urs_item
+                else reference.urs_item_id,
+            ),
+            actor=user,
+            ip_address=ip_address,
+        )
 
         await self.db.delete(reference)
         # 不提交：事务归属在请求 seam 上（ADR-0004）

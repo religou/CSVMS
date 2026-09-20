@@ -7,20 +7,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BusinessError
-from app.models.audit_log import AuditLog
 from app.models.document import Document, DocumentStatus, DocumentType
 from app.models.signature import ElectronicSignature
-from app.models.user import User
 from app.models.workflow import (
     ActionType,
     StepStatus,
-    StepType,
     Workflow,
     WorkflowAction,
     WorkflowStatus,
     WorkflowStep,
     WorkflowTemplate,
     WorkflowTemplateStep,
+)
+from app.services.audit_service import (
+    AuditService,
+    DocumentSubmitted,
+    StepDecided,
+    WorkflowReturned,
+    WorkflowWithdrawn,
 )
 from app.services.document_service import DocumentService, bump_major_version
 from app.services.signature_service import SignatureService
@@ -227,15 +231,11 @@ class WorkflowService:
         doc.status = DocumentStatus.UNDER_REVIEW
 
         # 审计轨迹（归属文档，同事务）
-        self.db.add(AuditLog(
-            user_id=submitter_id,
-            username=await self._actor_username(submitter_id),
-            action="SUBMIT",
-            resource_type="document",
-            resource_id=document_id,
-            resource_name=f"提交文档审批（工作流 {workflow.id}）",
+        await AuditService(self.db).record(
+            DocumentSubmitted(document_id=document_id, workflow_id=workflow.id),
+            actor=submitter_id,
             ip_address=ip_address,
-        ))
+        )
 
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
@@ -285,7 +285,7 @@ class WorkflowService:
         ))
 
         # 审计轨迹（同一事务）
-        self._add_step_audit(
+        await self._add_step_audit(
             signature=signature,
             workflow=workflow,
             step=current_step,
@@ -362,7 +362,7 @@ class WorkflowService:
         ))
 
         # 审计轨迹（同一事务）
-        self._add_step_audit(
+        await self._add_step_audit(
             signature=signature,
             workflow=workflow,
             step=current_step,
@@ -435,16 +435,15 @@ class WorkflowService:
                 workflow.current_step_order = prev_step_order
 
         # 审计轨迹（归属文档，同事务）
-        self.db.add(AuditLog(
-            user_id=actor_id,
-            username=await self._actor_username(actor_id),
-            action="RETURN",
-            resource_type="document",
-            resource_id=workflow.document_id,
-            resource_name=f"退回修改（工作流 {workflow.id}）",
-            reason=comment,
+        await AuditService(self.db).record(
+            WorkflowReturned(
+                document_id=workflow.document_id,
+                workflow_id=workflow.id,
+                comment=comment,
+            ),
+            actor=actor_id,
             ip_address=ip_address,
-        ))
+        )
 
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
@@ -477,15 +476,13 @@ class WorkflowService:
             doc.status = DocumentStatus.DRAFT
 
         # 审计轨迹（归属文档，同事务）
-        self.db.add(AuditLog(
-            user_id=actor_id,
-            username=await self._actor_username(actor_id),
-            action="WITHDRAW",
-            resource_type="document",
-            resource_id=workflow.document_id,
-            resource_name=f"撤回审批（工作流 {workflow.id}）",
+        await AuditService(self.db).record(
+            WorkflowWithdrawn(
+                document_id=workflow.document_id, workflow_id=workflow.id
+            ),
+            actor=actor_id,
             ip_address=ip_address,
-        ))
+        )
 
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
@@ -561,12 +558,7 @@ class WorkflowService:
             None,
         )
 
-    async def _actor_username(self, user_id: str) -> str:
-        """取操作人用户名用于审计日志（缺失时回退 system）."""
-        user = await self.db.get(User, user_id)
-        return user.username if user else "system"
-
-    def _add_step_audit(
+    async def _add_step_audit(
         self,
         *,
         signature: ElectronicSignature,
@@ -576,25 +568,21 @@ class WorkflowService:
         comment: str | None,
         ip_address: str | None,
     ) -> None:
-        """审批动作的审计轨迹：区分审核步/批准步/拒绝，统一归属文档（ADR-0003）.
+        """审批动作的审计轨迹（ADR-0003）.
 
-        签名本身由 `SignatureService` 写入（ADR-0005），这里只记审计。
+        签名本身由 `SignatureService` 写入（ADR-0005）；审核步与批准步的区分由
+        `StepDecided` 事件在审计 module 内部完成（ADR-0006）。
         """
-        if action == ActionType.REJECT:
-            audit_action, label = "REJECT", "审批拒绝"
-        elif step.step_type == StepType.REVIEW:
-            audit_action, label = "REVIEW", "审核通过"
-        else:
-            audit_action, label = "APPROVE", "批准通过，文档生效"
-        self.db.add(AuditLog(
-            user_id=signature.user_id,
-            username=signature.user.username,
-            action=audit_action,
-            resource_type="document",
-            resource_id=signature.document_id,
-            resource_name=f"{label}（工作流 {workflow.id}，电子签名 {signature.id}）",
-            reason=comment,
+        await AuditService(self.db).record(
+            StepDecided(
+                document_id=signature.document_id,
+                workflow_id=workflow.id,
+                signature_id=signature.id,
+                step_type=step.step_type,
+                action=action,
+                comment=comment,
+            ),
+            actor=signature.user,
             ip_address=ip_address,
-            timestamp=signature.timestamp,
-        ))
+        )
 

@@ -232,7 +232,7 @@ async def test_audit_failure_rolls_back_the_document_change(
 
     ⚠️ 这个测试是被**故意反转**过的（ADR-0004 / 本次迁移的红绿证据）。
     迁移前它的断言是「文档已改、审计缺失」—— 那时 service 先提交文档变更，随后
-    每个变更字段各调一次自行提交的 audit.log，最多 4 个事务，崩在中间就破坏
+    每个变更字段各调一次自行提交的审计写入，最多 4 个事务，崩在中间就破坏
     ADR-0003。迁移后整条请求是一个事务，所以断言翻转为「文档未改、审计未写」。
     看到断言方向和历史记录相反，不是它坏了。
     """
@@ -243,7 +243,7 @@ async def test_audit_failure_rolls_back_the_document_change(
     async def boom(self, *args, **kwargs):
         raise RuntimeError("模拟审计写入失败")
 
-    monkeypatch.setattr(AuditService, "log", boom)
+    monkeypatch.setattr(AuditService, "record", boom)
 
     with pytest.raises(RuntimeError, match="模拟审计写入失败"):
         await client.put(

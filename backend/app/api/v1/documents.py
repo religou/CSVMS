@@ -25,9 +25,13 @@ from app.schemas.urs import (
     URSReferenceResponse,
 )
 from app.services.document_service import DocumentService
-from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/documents", tags=["文档管理"])
+
+
+def _client_ip(request: Request) -> str | None:
+    """取请求来源 IP，写入审计轨迹的 WHERE 部分（21 CFR Part 11 §11.10(e)）."""
+    return request.client.host if request.client else None
 
 
 def _doc_response(doc, author_name: str | None = None) -> DocumentResponse:
@@ -52,12 +56,15 @@ def _doc_response(doc, author_name: str | None = None) -> DocumentResponse:
 @transactional
 async def create_document(
     data: DocumentCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """创建新文档."""
     service = DocumentService(db)
-    doc = await service.create_document(data, author_id=current_user.id)
+    doc = await service.create_document(
+        data, author_id=current_user.id, ip_address=_client_ip(request)
+    )
     return _doc_response(doc, author_name=current_user.full_name)
 
 
@@ -112,42 +119,19 @@ async def get_document(
 async def update_document(
     document_id: str,
     data: DocumentUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """更新文档."""
+    """更新文档.
+
+    变更差异与审计轨迹由 `DocumentService` 负责 —— 端点不需要先读旧值再逐字段比较
+    （ADR-0006）。
+    """
     service = DocumentService(db)
-    # 先获取旧值用于审计
-    old_doc = await service.get_document(document_id)
-    old_values = {
-        "title": old_doc.title,
-        "content": old_doc.content,
-        "summary": old_doc.summary,
-    }
-
-    doc = await service.update_document(document_id, data, current_user.id)
-
-    # 记录审计日志 - 每个变更字段一条
-    audit = AuditService(db)
-    field_map = {
-        "title": ("title", data.title),
-        "content": ("content", data.content),
-        "summary": ("summary", data.summary),
-    }
-    for field, (field_name, new_val) in field_map.items():
-        if new_val is not None and new_val != old_values[field]:
-            await audit.log(
-                action="UPDATE",
-                resource_type="document",
-                user_id=current_user.id,
-                username=current_user.username,
-                resource_id=document_id,
-                resource_name=doc.title,
-                field_changed=field_name,
-                old_value=old_values[field],
-                new_value=new_val,
-            )
-
+    doc = await service.update_document(
+        document_id, data, current_user.id, ip_address=_client_ip(request)
+    )
     return _doc_response(doc)
 
 
@@ -161,10 +145,12 @@ async def revise_document(
     current_user: User = Depends(get_current_user),
 ):
     """对已批准文档发起变更：冻结旧版本快照并退回草稿，需填写变更原因."""
-    ip_address = request.client.host if request.client else None
     service = DocumentService(db)
     doc = await service.revise_document(
-        document_id, current_user.id, data.change_reason, ip_address=ip_address
+        document_id,
+        current_user.id,
+        data.change_reason,
+        ip_address=_client_ip(request),
     )
     return _doc_response(doc)
 
@@ -173,12 +159,13 @@ async def revise_document(
 @transactional
 async def delete_document(
     document_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """删除文档."""
     service = DocumentService(db)
-    await service.delete_document(document_id, current_user.id)
+    await service.delete_document(document_id, current_user.id, ip_address=_client_ip(request))
     return {"message": "文档已删除"}
 
 
@@ -226,12 +213,15 @@ def _urs_reference_response(reference: URSReference) -> URSReferenceResponse:
 async def create_urs_item(
     document_id: str,
     data: URSItemCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """新增 URS 条目."""
     service = DocumentService(db)
-    item = await service.create_urs_item(document_id, data, current_user)
+    item = await service.create_urs_item(
+        document_id, data, current_user, ip_address=_client_ip(request)
+    )
     return _urs_item_response(item)
 
 
@@ -253,12 +243,15 @@ async def update_urs_item(
     document_id: str,
     item_id: str,
     data: URSItemUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """更新 URS 条目."""
     service = DocumentService(db)
-    item = await service.update_urs_item(document_id, item_id, data, current_user)
+    item = await service.update_urs_item(
+        document_id, item_id, data, current_user, ip_address=_client_ip(request)
+    )
     return _urs_item_response(item)
 
 
@@ -267,12 +260,15 @@ async def update_urs_item(
 async def delete_urs_item(
     document_id: str,
     item_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """删除 URS 条目."""
     service = DocumentService(db)
-    await service.delete_urs_item(document_id, item_id, current_user)
+    await service.delete_urs_item(
+        document_id, item_id, current_user, ip_address=_client_ip(request)
+    )
     return {"message": "URS 条目已删除"}
 
 
@@ -281,12 +277,15 @@ async def delete_urs_item(
 async def create_urs_reference(
     document_id: str,
     data: URSReferenceCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """新增 URS 引用."""
     service = DocumentService(db)
-    reference = await service.create_urs_reference(document_id, data, current_user)
+    reference = await service.create_urs_reference(
+        document_id, data, current_user, ip_address=_client_ip(request)
+    )
     return _urs_reference_response(reference)
 
 
@@ -307,10 +306,13 @@ async def list_urs_references(
 async def delete_urs_reference(
     document_id: str,
     reference_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """删除 URS 引用."""
     service = DocumentService(db)
-    await service.delete_urs_reference(document_id, reference_id, current_user)
+    await service.delete_urs_reference(
+        document_id, reference_id, current_user, ip_address=_client_ip(request)
+    )
     return {"message": "URS 引用已删除"}

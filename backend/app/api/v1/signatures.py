@@ -9,7 +9,7 @@ from app.api.transaction import transactional
 from app.models.user import User
 from app.schemas.signature import SignatureRequest, SignatureResponse, SignatureVerifyResponse
 from app.services.signature_service import SignatureService
-from app.services.audit_service import AuditService
+from app.services.audit_service import AuditService, DocumentSigned
 
 router = APIRouter(prefix="/signatures", tags=["电子签名"])
 
@@ -34,15 +34,10 @@ async def create_signature(
         ip_address=ip_address,
     )
 
-    # 记录审计日志
-    audit = AuditService(db)
-    await audit.log(
-        action="SIGN",
-        resource_type="document",
-        user_id=current_user.id,
-        username=current_user.username,
-        resource_id=data.document_id,
-        resource_name=f"电子签名: {sig.meaning}",
+    # 审计轨迹（同一事务）
+    await AuditService(db).record(
+        DocumentSigned(document_id=data.document_id, meaning=sig.meaning),
+        actor=current_user,
         ip_address=ip_address,
     )
 
