@@ -65,7 +65,8 @@ class WorkflowService:
             )
             self.db.add(step)
 
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(template)
         return template
 
@@ -108,7 +109,8 @@ class WorkflowService:
                 )
                 self.db.add(step)
 
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         return await self.get_template(template_id)
 
     async def get_template(self, template_id: str) -> WorkflowTemplate:
@@ -236,7 +238,8 @@ class WorkflowService:
             ip_address=ip_address,
         ))
 
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(workflow)
         return workflow
 
@@ -300,7 +303,8 @@ class WorkflowService:
                 doc.status = DocumentStatus.APPROVED
                 doc.version = bump_major_version(doc.version)
 
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(workflow)
         return workflow
 
@@ -359,7 +363,8 @@ class WorkflowService:
         if doc:
             doc.status = DocumentStatus.DRAFT
 
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(workflow)
         return workflow
 
@@ -428,7 +433,8 @@ class WorkflowService:
             ip_address=ip_address,
         ))
 
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(workflow)
         return workflow
 
@@ -468,7 +474,8 @@ class WorkflowService:
             ip_address=ip_address,
         ))
 
-        await self.db.commit()
+        # 不提交：事务归属在请求 seam 上（ADR-0004）
+        await self.db.flush()
         await self.db.refresh(workflow)
         return workflow
 
@@ -576,7 +583,11 @@ class WorkflowService:
         comment: str | None,
         ip_address: str | None,
     ) -> None:
-        """写入电子签名与系统审计轨迹（不提交，由调用方统一提交）."""
+        """写入电子签名与系统审计轨迹.
+
+        与本 service 的其余方法一样只 stage 不提交 —— 事务归属在请求 seam 上
+        （ADR-0004），无需再单独声明。
+        """
         document = await self.db.get(Document, workflow.document_id)
         if not document:
             raise BusinessError("文档不存在")

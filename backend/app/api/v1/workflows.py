@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.api.deps import get_current_user
+from app.api.transaction import transactional
 from app.models.user import User
 from app.models.workflow import Workflow, WorkflowAction as WorkflowActionModel
 from app.schemas.workflow import (
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/workflows", tags=["审批工作流"])
 
 
 @router.post("/templates", response_model=WorkflowTemplateResponse)
+@transactional
 async def create_workflow_template(
     data: WorkflowTemplateCreate,
     db: AsyncSession = Depends(get_db),
@@ -71,6 +73,7 @@ async def get_workflow_template(
 
 
 @router.put("/templates/{template_id}", response_model=WorkflowTemplateResponse)
+@transactional
 async def update_workflow_template(
     template_id: str,
     data: WorkflowTemplateUpdate,
@@ -94,6 +97,7 @@ async def update_workflow_template(
 
 
 @router.post("/submit", response_model=WorkflowResponse)
+@transactional
 async def submit_for_review(
     data: WorkflowSubmit,
     request: Request,
@@ -110,6 +114,7 @@ async def submit_for_review(
 
 
 @router.post("/{workflow_id}/approve", response_model=WorkflowResponse)
+@transactional
 async def approve_workflow(
     workflow_id: str,
     data: WorkflowApprovalRequest,
@@ -131,6 +136,7 @@ async def approve_workflow(
 
 
 @router.post("/{workflow_id}/reject", response_model=WorkflowResponse)
+@transactional
 async def reject_workflow(
     workflow_id: str,
     data: WorkflowApprovalRequest,
@@ -152,6 +158,7 @@ async def reject_workflow(
 
 
 @router.post("/{workflow_id}/return", response_model=WorkflowResponse)
+@transactional
 async def return_workflow(
     workflow_id: str,
     data: WorkflowActionRequest,
@@ -169,6 +176,7 @@ async def return_workflow(
 
 
 @router.post("/{workflow_id}/withdraw", response_model=WorkflowResponse)
+@transactional
 async def withdraw_workflow(
     workflow_id: str,
     request: Request,

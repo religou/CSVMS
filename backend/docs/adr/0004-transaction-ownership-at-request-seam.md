@@ -19,7 +19,7 @@ accepted
 - 提交发生在**响应生成之前**，因此提交失败可以被翻译为业务错误返回给客户端。任何异常（含 `BusinessError`、`PermissionDeniedError`）一律跳过提交并回滚。此前 service 提前提交，抛在后半段的业务错误可能留下已落库的前半段，该问题随之消失。
 - `IntegrityError` 由装饰器兜底翻译为 409；但已知的唯一约束仍必须在 service 内显式预检（如 `create_urs_reference` 的先查重后插），兜底翻译不作为常规校验手段。
 - service 层 18 处 `await db.refresh(...)` 改为 flush 后读或删除。`expire_on_commit=False` 保证对象在提交前后均可读。
-- 忘记加装饰器的后果是静默不落库，因此强制手段必须同时覆盖两件事：以 AST 测试禁止 `app/services/**` 内出现 `.commit(` / `.rollback(`，**并**断言范围内三个路由的每个 `post` / `put` / `delete` 端点都带有 `@transactional`。前者附一份递减白名单，从 23 处已知例外起步，随迁移逐条划除，终态仅保留 savepoint 一处；迁移进度因此成为 CI 中一个可读的数字。`ProjectService` 的 5 处提交（服务范围外的 `projects.py`，但可从范围内的只读权限检查路径抵达）在白名单上作为显式已知债务保留。
+- 忘记加装饰器的后果是静默不落库，因此强制手段必须同时覆盖两件事：以 AST 测试禁止 `app/services/**` 内出现 `.commit(` / `.rollback(`，**并**断言范围内三个路由的每个 `post` / `put` / `delete` 端点都带有 `@transactional`。前者附一份递减白名单，从 23 处已知例外起步，随迁移逐条划除；迁移进度因此成为 CI 中一个可读的数字。终态为提交白名单 5 处、回滚白名单为空：`ProjectService` 的 5 处提交（服务范围外的 `projects.py`，但可从范围内的只读权限检查路径抵达）作为显式已知债务保留，而 `create_urs_item` 的 `begin_nested` 不计入两份白名单中的任何一份。
 - `create_urs_item` 的 `item_code` 冲突重试改用 savepoint (`begin_nested`) 包裹。原实现在 `IntegrityError` 时直接 `rollback()`，单事务下会抹掉整个请求已暂存的工作。**已实测**：aiosqlite（SQLite 3.50.4）+ SQLAlchemy 2.0.53 上 savepoint 语义正确，内层冲突回滚后外层暂存的工作存活、重试结果落库。
 - `AuditService.log` 仅去掉内部的 `commit()` / `refresh()`，interface 一字不改。它的 11 个参数、自由文本 action 词表、以及 6 处就地构造 `AuditLog` 的重复留待后续处理 —— 那些重复正是因本决策未落地才存在，落地后它们成为没有理由存在的重复。
 - 关闭一个 ADR-0003 的实际缺口。**已实测**：令 `PUT /documents/{id}` 的首次 `audit.log` 失败后，文档标题已落库为新值而 `UPDATE` 审计行数为 0 —— service 先提交文档变更，随后每个变更字段各调一次自行提交的 `audit.log`，最多 4 个事务。

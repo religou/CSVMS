@@ -35,11 +35,13 @@ ROUTERS_DIR = APP_DIR / "api" / "v1"
 #
 # 起点是 23 处（workflow 7 + document 9 + signature 1 + audit 1 + project 5）。
 # 每迁移一个「端点 + 其独占的 service 方法」，就把这里的数字减一。
-# 当前 12 处：workflow_service 7 + project_service 5。
-# workflow_service 归零即本次范围完成；project_service 的 5 处属范围外债务。
+# 当前 5 处，全部属 project_service —— 它服务范围外的 projects.py，但可从范围内的
+# 只读权限检查路径（document_service._require_document_manage_permission）抵达，
+# 因此作为显式已知债务留在白名单上，而不是埋着的雷。
+# 本次范围（documents / workflows / signatures）已归零。
 # --------------------------------------------------------------------------- #
 ALLOWED_COMMITS: dict[str, int] = {
-    "workflow_service.py": 7,
+    "workflow_service.py": 0,  # 已迁移：全部 7 个方法
     "document_service.py": 0,  # 已迁移：全部 9 个方法
     "signature_service.py": 0,  # 已迁移：sign
     "audit_service.py": 0,  # 已迁移：log
@@ -56,15 +58,7 @@ ALLOWED_ROLLBACKS: dict[str, int] = {
 # 待迁移的写端点：尚未跨过 seam 的 post/put/delete
 # 迁移一个就从这里删一行。清空即本次范围完成。
 # --------------------------------------------------------------------------- #
-PENDING_WRITE_ENDPOINTS: set[tuple[str, str]] = {
-    ("workflows.py", "create_workflow_template"),
-    ("workflows.py", "update_workflow_template"),
-    ("workflows.py", "submit_for_review"),
-    ("workflows.py", "approve_workflow"),
-    ("workflows.py", "reject_workflow"),
-    ("workflows.py", "return_workflow"),
-    ("workflows.py", "withdraw_workflow"),
-}
+PENDING_WRITE_ENDPOINTS: set[tuple[str, str]] = set()  # 已清空：本次范围迁移完成
 
 IN_SCOPE_ROUTERS = ("documents.py", "workflows.py", "signatures.py")
 WRITE_METHODS = {"post", "put", "delete", "patch"}
