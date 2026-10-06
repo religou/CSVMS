@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BusinessError
-from app.models.document import Document, DocumentStatus, DocumentType
+from app.domain import document_lifecycle as lifecycle
+from app.domain.document_lifecycle import DocumentOperation
+from app.models.document import Document, DocumentType
 from app.models.signature import ElectronicSignature
 from app.models.workflow import (
     ActionType,
@@ -26,7 +28,7 @@ from app.services.audit_service import (
     WorkflowReturned,
     WorkflowWithdrawn,
 )
-from app.services.document_service import DocumentService, bump_major_version
+from app.services.document_service import DocumentService
 from app.services.signature_service import SignatureService
 
 
@@ -158,11 +160,11 @@ class WorkflowService:
     ) -> Workflow:
         """提交文档进入审批流程."""
         # 获取文档
-        doc = await self.db.get(Document, document_id)
-        if not doc:
-            raise BusinessError("文档不存在")
-        if doc.status != DocumentStatus.DRAFT:
-            raise BusinessError("只有草稿状态的文档可以提交审核")
+        doc = await self._require_document(document_id)
+        submit_outcome = lifecycle.apply(
+            DocumentOperation.SUBMIT, status=doc.status, version=doc.version
+        )
+        # 业务资格（用户与资源的关系）不属于跃迁表
         if doc.author_id != submitter_id:
             raise BusinessError("只有文档作者可以提交审核")
 
@@ -227,8 +229,9 @@ class WorkflowService:
         )
         self.db.add(action)
 
-        # 更新文档状态
-        doc.status = DocumentStatus.UNDER_REVIEW
+        # 更新文档状态（ADR-0007）
+        doc.status = submit_outcome.status
+        doc.version = submit_outcome.version
 
         # 审计轨迹（归属文档，同事务）
         await AuditService(self.db).record(
@@ -303,11 +306,10 @@ class WorkflowService:
             # 所有步骤完成 → 工作流完成
             workflow.status = WorkflowStatus.APPROVED
             workflow.completed_at = datetime.now(timezone.utc)
-            # 更新文档状态
-            doc = await self.db.get(Document, workflow.document_id)
-            if doc:
-                doc.status = DocumentStatus.APPROVED
-                doc.version = bump_major_version(doc.version)
+            # 更新文档状态与主版本进位（ADR-0007）
+            await self._transition_document(
+                workflow.document_id, DocumentOperation.APPROVE_FINAL
+            )
 
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
@@ -372,9 +374,7 @@ class WorkflowService:
         )
 
         # 文档退回草稿
-        doc = await self.db.get(Document, workflow.document_id)
-        if doc:
-            doc.status = DocumentStatus.DRAFT
+        await self._transition_document(workflow.document_id, DocumentOperation.REJECT)
 
         # 不提交：事务归属在请求 seam 上（ADR-0004）
         await self.db.flush()
@@ -414,9 +414,9 @@ class WorkflowService:
             workflow.status = WorkflowStatus.REJECTED
             workflow.completed_at = datetime.now(timezone.utc)
 
-            doc = await self.db.get(Document, workflow.document_id)
-            if doc:
-                doc.status = DocumentStatus.DRAFT
+            await self._transition_document(
+                workflow.document_id, DocumentOperation.RETURN_TO_AUTHOR
+            )
         else:
             # 退回到上一步
             current_step.status = StepStatus.PENDING
@@ -471,9 +471,9 @@ class WorkflowService:
         ))
 
         # 文档回到草稿
-        doc = await self.db.get(Document, workflow.document_id)
-        if doc:
-            doc.status = DocumentStatus.DRAFT
+        await self._transition_document(
+            workflow.document_id, DocumentOperation.WITHDRAW
+        )
 
         # 审计轨迹（归属文档，同事务）
         await AuditService(self.db).record(
@@ -532,6 +532,29 @@ class WorkflowService:
         if not workflow:
             raise BusinessError("工作流不存在")
         return workflow
+
+    async def _require_document(self, document_id: str) -> Document:
+        """取文档，不存在即报错.
+
+        此前工作流路径是 `if doc:` 的静默分支 —— 文档查不到时工作流照样标记完成，
+        而文档状态一声不响地不变（ADR-0007）。
+        """
+        doc = await self.db.get(Document, document_id)
+        if not doc:
+            raise BusinessError("文档不存在", status_code=404)
+        return doc
+
+    async def _transition_document(
+        self, document_id: str, operation: DocumentOperation
+    ) -> Document:
+        """按跃迁表推进文档状态与版本号（ADR-0007）."""
+        doc = await self._require_document(document_id)
+        outcome = lifecycle.apply(
+            operation, status=doc.status, version=doc.version
+        )
+        doc.status = outcome.status
+        doc.version = outcome.version
+        return doc
 
     def _validate_workflow_active(self, workflow: Workflow) -> None:
         if workflow.status != WorkflowStatus.IN_PROGRESS:

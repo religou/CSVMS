@@ -7,6 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BusinessError, PermissionDeniedError
+from app.domain import document_lifecycle as lifecycle
+from app.domain.document_lifecycle import DocumentOperation
 from app.models.document import Document, DocumentVersion, DocumentStatus, DocumentType
 from app.models.signature import ElectronicSignature
 from app.models.workflow import Workflow, WorkflowStatus
@@ -31,29 +33,6 @@ from app.services.audit_service import (
 )
 from app.services.permission_service import user_has_role
 from app.services.project_service import ProjectService
-
-
-def _parse_major(version: str) -> int:
-    """从版本标签解析主版本号，无法解析时按 0 处理."""
-    try:
-        return int(version.split(".")[0])
-    except (ValueError, IndexError):
-        return 0
-
-
-def bump_major_version(version: str) -> str:
-    """主版本进位：x.y -> (x+1).0（文档批准通过时）."""
-    return f"{_parse_major(version) + 1}.0"
-
-
-def bump_minor_version(version: str) -> str:
-    """次版本进位：x.y -> x.(y+1)（已批准文档发起变更回到草稿时）."""
-    parts = version.split(".")
-    try:
-        major, minor = int(parts[0]), int(parts[1])
-    except (ValueError, IndexError):
-        return version
-    return f"{major}.{minor + 1}"
 
 
 class DocumentService:
@@ -185,9 +164,11 @@ class DocumentService:
     ) -> Document:
         """更新文档内容（仅草稿状态可编辑）."""
         document = await self.get_document(document_id)
-
-        if document.status != DocumentStatus.DRAFT:
-            raise BusinessError("只有草稿状态的文档可以编辑")
+        lifecycle.apply(
+            DocumentOperation.EDIT,
+            status=document.status,
+            version=document.version,
+        )
 
         changes: list[FieldChange] = []
         for name in self._EDITABLE_FIELDS:
@@ -233,8 +214,11 @@ class DocumentService:
             raise BusinessError("发起变更必须填写变更原因")
 
         document = await self.get_document(document_id)
-        if document.status != DocumentStatus.APPROVED:
-            raise BusinessError("只有已批准的文档可以发起变更")
+        outcome = lifecycle.apply(
+            DocumentOperation.REVISE,
+            status=document.status,
+            version=document.version,
+        )
 
         # 冻结当前已批准版本为不可变快照（保留其原始版本标签）
         result = await self.db.execute(
@@ -252,11 +236,11 @@ class DocumentService:
             created_by=user_id,
         ))
 
-        # 打破之前状态：活动文档退回草稿，次版本进位
+        # 打破之前状态：新状态与次版本进位都由跃迁表给出（ADR-0007）
         old_status = document.status.value
         approved_version = document.version  # 被取代的已批准版本标签（如 "1.0"）
-        document.status = DocumentStatus.DRAFT
-        document.version = bump_minor_version(document.version)
+        document.status = outcome.status
+        document.version = outcome.version
         document.updated_at = datetime.now(timezone.utc)
 
         # 审计轨迹：显式记录「批准状态被破坏」（同事务）
@@ -265,7 +249,7 @@ class DocumentService:
             DocumentRevised(
                 document_id=document_id,
                 old_status=old_status,
-                new_status=DocumentStatus.DRAFT.value,
+                new_status=outcome.status.value,
                 change_reason=change_reason,
             ),
             actor=user_id,
@@ -328,9 +312,12 @@ class DocumentService:
     ) -> None:
         """删除文档（仅草稿状态可删除）."""
         document = await self.get_document(document_id)
-
-        if document.status != DocumentStatus.DRAFT:
-            raise BusinessError("只有草稿状态的文档可以删除")
+        lifecycle.apply(
+            DocumentOperation.DELETE,
+            status=document.status,
+            version=document.version,
+        )
+        # 业务资格（用户与资源的关系）不属于跃迁表
         if document.author_id != user_id:
             raise BusinessError("只有文档作者可以删除文档")
 
@@ -381,10 +368,14 @@ class DocumentService:
         document = await self.get_document(document_id)
         await self._require_document_manage_permission(document, user)
 
+        # 业务资格：文档类型。状态门控交给跃迁表（ADR-0007）
         if document.doc_type != DocumentType.URS:
             raise BusinessError("仅 URS 类型文档可维护条目")
-        if document.status != DocumentStatus.DRAFT:
-            raise BusinessError("只有草稿状态的 URS 文档可以维护条目")
+        lifecycle.apply(
+            DocumentOperation.MAINTAIN_URS_ITEM,
+            status=document.status,
+            version=document.version,
+        )
 
         return document
 
@@ -551,8 +542,11 @@ class DocumentService:
 
         if ref_document.doc_type not in self._REFERENCING_DOC_TYPES:
             raise BusinessError("仅 FS/DS/IQ/OQ/PQ 类型文档可关联 URS 条目")
-        if ref_document.status != DocumentStatus.DRAFT:
-            raise BusinessError("只有草稿状态的文档可以关联 URS 条目")
+        lifecycle.apply(
+            DocumentOperation.ADD_URS_REFERENCE,
+            status=ref_document.status,
+            version=ref_document.version,
+        )
 
         result = await self.db.execute(
             select(URSItem).where(URSItem.id == data.urs_item_id)
@@ -624,8 +618,11 @@ class DocumentService:
         ref_document = await self.get_document(ref_document_id)
         await self._require_document_manage_permission(ref_document, user)
 
-        if ref_document.status != DocumentStatus.DRAFT:
-            raise BusinessError("只有草稿状态的文档可以删除 URS 引用")
+        lifecycle.apply(
+            DocumentOperation.REMOVE_URS_REFERENCE,
+            status=ref_document.status,
+            version=ref_document.version,
+        )
 
         reference = await self._get_urs_reference(ref_document_id, reference_id)
 
