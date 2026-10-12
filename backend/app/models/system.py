@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.mysql import CHAR
 
@@ -23,6 +23,8 @@ class System(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     gxp_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     gamp5_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # 符合法规：存放 regulation 字典选项的 code 列表
+    regulations: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     owner_id: Mapped[str | None] = mapped_column(CHAR(36), ForeignKey("users.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

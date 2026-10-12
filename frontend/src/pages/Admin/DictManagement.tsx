@@ -36,6 +36,26 @@ const PROJECT_PERMISSION_GROUP_ORDER = [
     'project_button',
 ]
 
+// 字典类别标签页的展示顺序；未列出的类别排在后面，保持后端返回的顺序
+const CATEGORY_DISPLAY_ORDER = [
+    'doc_status',
+    'doc_type',
+    'system_role',
+    'project_role',
+    'project_stage',
+    'project_status',
+    'regulation',
+]
+
+function sortCategoriesForDisplay(categories: DictCategory[]) {
+    const rank = (code: string) => {
+        const index = CATEGORY_DISPLAY_ORDER.indexOf(code)
+        return index === -1 ? CATEGORY_DISPLAY_ORDER.length : index
+    }
+    // Array.prototype.sort 是稳定排序，同 rank 的类别保持原有顺序
+    return [...categories].sort((a, b) => rank(a.code) - rank(b.code))
+}
+
 function defaultProjectRolePermissionCodes(permissionProfile?: string | null) {
     const baseCodes = [
         'project.dashboard.menu',
@@ -141,7 +161,9 @@ export default function DictManagementPage() {
     const fetchCategories = async () => {
         setLoading(true)
         try {
-            const data = await dictService.listCategories()
+            const data = sortCategoriesForDisplay(
+                await dictService.listCategories(),
+            )
             setCategories(data)
             if (!activeCategory && data.length > 0) {
                 setActiveCategory(data[0]!.id)

@@ -15,6 +15,7 @@ class SystemCreate(BaseModel):
     description: str | None = None
     gxp_category: str | None = None
     gamp5_category: str | None = None
+    regulations: list[str] | None = None
     owner_id: str | None = None
 
 
@@ -27,6 +28,7 @@ class SystemUpdate(BaseModel):
     description: str | None = None
     gxp_category: str | None = None
     gamp5_category: str | None = None
+    regulations: list[str] | None = None
     owner_id: str | None = None
     is_active: bool | None = None
 
@@ -42,6 +44,7 @@ class SystemResponse(BaseModel):
     description: str | None = None
     gxp_category: str | None = None
     gamp5_category: str | None = None
+    regulations: list[str] = []
     owner_id: str | None = None
     owner_name: str | None = None
     is_active: bool

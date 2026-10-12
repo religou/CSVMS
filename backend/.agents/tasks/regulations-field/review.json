@@ -1,0 +1,30 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "label": "Downgrade deletes admin-added 法规 items",
+      "blocking": false,
+      "confidence": "confirmed",
+      "detail": "downgrade() deletes every dict_items row in the regulation category, not only the 18 seeded ones, and drops systems.regulations along with any saved selections. This is deliberate, so the FK does not block the category delete. Note the data loss in the migration docstring or runbook."
+    },
+    {
+      "label": "No server-side check of regulation codes",
+      "blocking": false,
+      "confidence": "confirmed",
+      "detail": "SystemCreate/SystemUpdate.regulations accept any list of strings, with no check against the dictionary and no length bound. The endpoint is admin-only and the plan accepts this. Validate codes against enabled regulation items if strict consistency is needed later."
+    },
+    {
+      "label": "Disabled items show as raw codes",
+      "blocking": false,
+      "confidence": "confirmed",
+      "detail": "useDictItems loads only enabled items, so a stored code whose item was later disabled shows as a bare code tag in edit mode. The plan accepts this. If it becomes a problem, use enabledOnly: false and mark disabled options."
+    },
+    {
+      "label": "法规 tab order has no test",
+      "blocking": false,
+      "confidence": "confirmed",
+      "detail": "'regulation' is appended to CATEGORY_DISPLAY_ORDER, but no test asserts the tab order, and the 字典管理 page was not checked manually. Add an assertion that the 法规 tab is rendered last."
+    }
+  ],
+  "reviewDoc": "c:\\Users\\zhouek\\Work\\SelfProject\\CSVMS\\backend\\.agents\\tasks\\regulations-field\\review.md"
+}

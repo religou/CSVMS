@@ -31,6 +31,7 @@ def _system_response(system: System) -> dict:
         "description": system.description,
         "gxp_category": system.gxp_category,
         "gamp5_category": system.gamp5_category,
+        "regulations": system.regulations or [],
         "owner_id": system.owner_id,
         "owner_name": system.owner.full_name if system.owner else None,
         "is_active": system.is_active,

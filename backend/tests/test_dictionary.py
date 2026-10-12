@@ -274,6 +274,72 @@ async def test_seed_dict_is_idempotent(
     assert item_count_after == item_count_before
 
 
+@pytest.mark.asyncio
+async def test_seed_dict_creates_regulation_category(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """种子脚本应创建 regulation（法规）分类及 18 个选项，并可通过 API 按排序读取。"""
+    from tests.conftest import TestSessionLocal
+
+    monkeypatch.setattr(seed_dict_module, "get_session_factory", lambda: TestSessionLocal)
+
+    await seed_dict()
+
+    result = await db_session.execute(
+        select(DictCategory).where(DictCategory.code == "regulation")
+    )
+    category = result.scalar_one_or_none()
+    assert category is not None
+    assert category.name == "法规"
+    assert category.is_system is True
+
+    items = (
+        await db_session.execute(
+            select(DictItem).where(DictItem.category_id == category.id)
+        )
+    ).scalars().all()
+    codes = {item.code for item in items}
+    assert len(items) == 18
+    assert {"fda_21cfr_part11", "eu_gmp_annex11"} <= codes
+
+    await _create_admin(db_session)
+    token = await _login(client, "dict-admin", "Admin@1234")
+    resp = await client.get(
+        "/api/v1/dict/categories/regulation/items",
+        headers=_auth_header(token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body) == 18
+    sort_orders = [item["sort_order"] for item in body]
+    assert sort_orders == sorted(sort_orders)
+    assert body[0]["code"] == "fda_21cfr_part11"
+
+
+def test_regulation_migration_items_match_seed_data():
+    """迁移中冻结的法规字典数据应与 seed_dict.SEED_DATA 保持一致。"""
+    import importlib.util
+    from pathlib import Path
+
+    migration_path = (
+        Path(__file__).parents[1]
+        / "alembic/versions/20261012_0001_add_regulations_to_systems.py"
+    )
+    spec = importlib.util.spec_from_file_location("regulation_migration", migration_path)
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    seed_category = next(
+        cat for cat in seed_dict_module.SEED_DATA if cat["code"] == "regulation"
+    )
+    assert migration.down_revision == "20260708_0001"
+    assert migration.REGULATION_CATEGORY == {
+        key: seed_category[key] for key in ("code", "name", "description", "is_system")
+    }
+    assert migration.REGULATION_ITEMS == seed_category["items"]
+
+
 @settings(
     max_examples=100,
     deadline=None,

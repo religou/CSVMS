@@ -9,6 +9,8 @@ export interface SystemItem {
     description: string | null
     gxp_category: string | null
     gamp5_category: string | null
+    /** 符合法规：regulation 字典选项的 code 列表 */
+    regulations: string[]
     owner_id: string | null
     owner_name: string | null
     is_active: boolean
@@ -31,6 +33,7 @@ export interface CreateSystemData {
     description?: string
     gxp_category?: string
     gamp5_category?: string
+    regulations?: string[]
     owner_id?: string
 }
 
@@ -41,6 +44,7 @@ export interface UpdateSystemData {
     description?: string
     gxp_category?: string
     gamp5_category?: string
+    regulations?: string[]
     owner_id?: string
     is_active?: boolean
 }

@@ -29,6 +29,7 @@ import systemService, {
 import { getErrorMessage } from '@/services/apiClient'
 import { useAuthStore } from '@/stores/authStore'
 import { adminService, type UserItem } from '@/services/admin'
+import { useDictItems } from '@/hooks/useDictItems'
 
 const GXP_CATEGORY_OPTIONS = [
     { value: 'GMP', label: 'GMP（良好生产规范）' },
@@ -56,6 +57,8 @@ export default function SystemsPage() {
     const [editingSystem, setEditingSystem] = useState<SystemItem | null>(null)
     const [users, setUsers] = useState<UserItem[]>([])
     const [form] = Form.useForm()
+    // 符合法规选项来自字典管理中的「法规」(regulation) 字典，仅已启用项
+    const { options: regulationOptions } = useDictItems('regulation')
     const currentUser = useAuthStore((state) => state.user)
     const isAdmin = currentUser?.roles?.includes('admin') ?? false
 
@@ -101,7 +104,10 @@ export default function SystemsPage() {
     const openModal = (system?: SystemItem) => {
         setEditingSystem(system ?? null)
         if (system) {
-            form.setFieldsValue(system)
+            form.setFieldsValue({
+                ...system,
+                regulations: system.regulations ?? [],
+            })
         } else {
             form.resetFields()
         }
@@ -166,7 +172,7 @@ export default function SystemsPage() {
     const columns: ColumnsType<SystemItem> = [
         { title: '系统编号', dataIndex: 'code', width: 120 },
         { title: '系统名称', dataIndex: 'name', width: 180, ellipsis: true },
-        { title: '供应商', dataIndex: 'vendor', width: 160, ellipsis: true },
+        { title: '供应商名称', dataIndex: 'vendor', width: 160, ellipsis: true },
         { title: '版本号', dataIndex: 'version', width: 100 },
         {
             title: 'GxP 类别',
@@ -305,11 +311,11 @@ export default function SystemsPage() {
                         rules={[{ required: true, message: '请输入系统名称' }]}>
                         <Input placeholder="如：SAP ERP 系统" />
                     </Form.Item>
-                    <Form.Item name="vendor" label="供应商">
-                        <Input placeholder="如：SAP" />
-                    </Form.Item>
                     <Form.Item name="version" label="版本号">
                         <Input placeholder="如：v4.2.1" />
+                    </Form.Item>
+                    <Form.Item name="vendor" label="供应商名称">
+                        <Input placeholder="如：SAP" />
                     </Form.Item>
                     <Row gutter={16}>
                         <Col span={12}>
@@ -331,6 +337,15 @@ export default function SystemsPage() {
                             </Form.Item>
                         </Col>
                     </Row>
+                    <Form.Item name="regulations" label="符合法规">
+                        <Select
+                            mode="multiple"
+                            allowClear
+                            placeholder="选择符合的法规"
+                            optionFilterProp="label"
+                            options={regulationOptions}
+                        />
+                    </Form.Item>
                     <Form.Item name="description" label="系统描述">
                         <Input.TextArea rows={3} />
                     </Form.Item>
